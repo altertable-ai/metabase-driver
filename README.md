@@ -110,8 +110,8 @@ directory of a self-hosted Metabase installation and restart Metabase.
 
 [Release Please](https://github.com/googleapis/release-please) derives semantic
 versions and release notes from Conventional Commit messages on `main`. Its
-release pull request updates `CHANGELOG.md`, `version.txt`, and the plugin
-version in `resources/metabase-plugin.yaml`.
+release pull request updates `CHANGELOG.md` and the plugin version in
+`resources/metabase-plugin.yaml`.
 
 Merging the release pull request creates a `vX.Y.Z` GitHub release, builds the
 driver against Metabase `v0.61.2`, and attaches both

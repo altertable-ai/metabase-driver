@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      altertable-mock:
+        image: ghcr.io/altertable-ai/altertable-mock@sha256:2e85cecd30b582a28196fc7574b2c7ae323378ccf40abfe658e2692270799977
+        ports:
+          - 15000:15000
+        env:
+          ALTERTABLE_MOCK_USERS: testuser:testpass
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Java
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Clojure
+        uses: DeLaGuardo/setup-clojure@4c7a6f613e5089821bb3bb2a33a3ee115578580d # 13.6.1
+        with:
+          cli: 1.12.5.1654
+
+      - name: Cache Clojure dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            .cpcache
+          key: ${{ runner.os }}-clojure-${{ hashFiles('deps.edn') }}
+          restore-keys: |
+            ${{ runner.os }}-clojure-
+
+      - name: Wait for Altertable mock
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --silent --show-error --output /dev/null http://localhost:15000/; then
+              exit 0
+            fi
+            if [ "$attempt" = 30 ]; then
+              echo "Altertable mock did not become ready" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Run tests
+        env:
+          ALTERTABLE_MOCK_URL: http://localhost:15000
+        run: clojure -X:test

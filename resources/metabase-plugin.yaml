@@ -6,8 +6,7 @@ driver:
   name: altertable
   display-name: Altertable
   lazy-load: true
-  parent:
-    - sql
+  parent: sql
   connection-properties:
     - name: base-url
       display-name: API URL
@@ -32,28 +31,21 @@ driver:
       required: false
     - advanced-options-start
     - name: compute-size
-      display-name: Compute size
-      type: select
+      display-name: Compute size (AUTO, XS, S, M, L, or XL)
+      type: string
       default: AUTO
-      options:
-        - AUTO
-        - XS
-        - S
-        - M
-        - L
-        - XL
       visible-if:
         advanced-options: true
     - name: connect-timeout-seconds
       display-name: Connection timeout (seconds)
-      type: integer
-      default: 5
+      type: string
+      default: "5"
       visible-if:
         advanced-options: true
     - name: request-timeout-seconds
       display-name: Query timeout (seconds)
-      type: integer
-      default: 60
+      type: string
+      default: "60"
       visible-if:
         advanced-options: true
 init:

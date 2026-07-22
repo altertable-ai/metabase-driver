@@ -66,6 +66,9 @@ jobs:
             sleep 1
           done
 
+      - name: Prepare Metabase test config
+        run: ./bin/prepare-test-env.sh
+
       - name: Run tests
         env:
           ALTERTABLE_MOCK_URL: http://localhost:15000

@@ -6,7 +6,7 @@ An open-source [Metabase](https://www.metabase.com/) driver for querying an
 > [!IMPORTANT]
 > This project is in early development. The read-only transport and result
 > processing foundation is implemented, but schema synchronization, Metabase
-> query execution wiring, packaging, and release automation are still in
+> query execution wiring, and end-to-end Metabase validation are still in
 > progress. It is not yet ready for production use.
 
 ## Project status
@@ -23,7 +23,7 @@ The driver currently provides:
 - unit and mock-backed integration tests against Metabase `v0.61.2`.
 
 Work remaining before the first usable release includes metadata
-synchronization, MBQL-to-SQL execution integration, plugin packaging, and CI.
+synchronization and MBQL-to-SQL execution integration.
 
 ## Read-only scope
 
@@ -88,6 +88,41 @@ The integration tests use the mock server credentials `testuser` and
 `testpass`. Set `ALTERTABLE_MOCK_URL` when the mock is reachable at another
 address. The unit tests do not require a running service.
 
+Pull requests targeting `main` run the same suite in GitHub Actions with an
+Altertable mock service.
+
+### Build the plugin
+
+The plugin is built with the driver tooling from the pinned Metabase version.
+Clone Metabase and provide its path to the build script:
+
+```sh
+git clone --branch v0.61.2 --depth 1 \
+  https://github.com/metabase/metabase.git ../metabase
+METABASE_DIR=../metabase ./bin/build-driver.sh
+```
+
+The installable plugin is written to
+`target/altertable.metabase-driver.jar`. Copy that file into the `plugins/`
+directory of a self-hosted Metabase installation and restart Metabase.
+
+## Releases
+
+[Release Please](https://github.com/googleapis/release-please) derives semantic
+versions and release notes from Conventional Commit messages on `main`. Its
+release pull request updates `CHANGELOG.md` and the plugin version in
+`resources/metabase-plugin.yaml`.
+
+Merging the release pull request creates a `vX.Y.Z` GitHub release, builds the
+driver against Metabase `v0.61.2`, and attaches both
+`altertable.metabase-driver.jar` and its SHA-256 checksum. The release workflow
+also accepts an existing tag through manual dispatch so a failed artifact
+build or upload can be retried safely.
+
+Repository administrators must allow GitHub Actions to create pull requests
+in the repository's workflow-permission settings so Release Please can open
+and update its release pull request with `GITHUB_TOKEN`.
+
 ## Architecture
 
 - `metabase.driver.altertable` registers the driver and its capabilities.
@@ -108,6 +143,9 @@ as a small reference implementation.
 
 Issues and pull requests are welcome. Please keep changes focused, add tests
 for behavior changes, and run `clojure -X:test` before opening a pull request.
+Use Conventional Commit messages (for example, `fix: handle empty results`) so
+Release Please can determine the next version and generate useful release
+notes.
 For security-sensitive reports, avoid publishing credentials, tokens, query
 results, or other private deployment details in a public issue.
 

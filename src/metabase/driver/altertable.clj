@@ -1,9 +1,13 @@
 (ns metabase.driver.altertable
   (:require
    [metabase.driver :as driver]
-   [metabase.driver.altertable.client]))
+   [metabase.driver.altertable.client :as client]))
 
 (driver/register! :altertable, :parent #{:sql})
+
+(defmethod driver/can-connect? :altertable
+  [_driver details]
+  (client/test-connection! details))
 
 (doseq [feature [:database-routing
                  :dependencies/native

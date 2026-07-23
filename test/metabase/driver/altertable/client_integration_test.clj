@@ -15,6 +15,9 @@
     :password password
     :request-timeout-seconds 10}))
 
+(deftest ^:integration test-connection-test
+  (is (true? (client/test-connection! (mock-details)))))
+
 (deftest ^:integration execute-query-test
   (let [response (promise)]
     (client/execute-query!

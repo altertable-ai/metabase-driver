@@ -15,7 +15,7 @@ The driver currently provides:
 
 - registration as a read-only Metabase SQL driver;
 - validation and normalization of Altertable connection settings;
-- authentication with either username/password or a basic token;
+- authentication with username and password;
 - streaming query execution through the Altertable Lakehouse Java SDK;
 - cancellation and timeout primitives;
 - conversion of Altertable result values to Metabase-friendly Java values;
@@ -40,18 +40,17 @@ Metabase will expose the following settings when the plugin is installed:
 
 | Setting | Description |
 | --- | --- |
-| API URL | Altertable API endpoint; defaults to `https://api.altertable.ai` |
 | Catalog | Lakehouse catalog to query |
-| Default schema | Optional schema used when a query does not qualify a table |
-| Username and password | Standard credentials; both values must be supplied together |
-| Basic token | Alternative to username/password authentication |
-| Compute size | `AUTO`, `XS`, `S`, `M`, `L`, or `XL` |
-| Connection timeout | Time allowed to establish a connection, in seconds |
-| Query timeout | Time allowed for a request, in seconds |
+| Username and password | Credentials; both values must be supplied together |
+| API URL | Altertable API endpoint; defaults to `https://api.altertable.ai` (advanced) |
+| Schema | Optional schema used when a query does not qualify a table (advanced) |
+| Compute size | `AUTO`, `XS`, `S`, `M`, `L`, or `XL` (advanced) |
+| Connection timeout | Time allowed to establish a connection, in seconds (advanced) |
+| Query timeout | Time allowed for a request, in seconds (advanced) |
 
-Supply exactly one authentication method. Secrets are passed to the SDK but
-are omitted from validation errors and sanitized from SDK failures before an
-error reaches Metabase.
+Username and password are required. Secrets are passed to the SDK but are omitted
+from validation errors and sanitized from SDK failures before an error reaches
+Metabase.
 
 ## Development
 

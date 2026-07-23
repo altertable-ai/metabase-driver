@@ -63,23 +63,21 @@
   "Validate and normalize Metabase connection details without retaining any
   secret in exception data."
   [details]
-  (let [catalog     (non-blank (:catalog details))
-        schema      (non-blank (:schema details))
-        username    (non-blank (:username details))
-        password    (non-blank (:password details))
-        basic-token (non-blank (:basic-token details))]
+  (let [catalog  (non-blank (:catalog details))
+        schema   (non-blank (:schema details))
+        username (non-blank (:username details))
+        password (non-blank (:password details))]
     (when-not catalog
       (invalid! "Catalog is required." :catalog))
     (when (not= (boolean username) (boolean password))
       (invalid! "Both username and password must be provided together." :username))
-    (when-not (or basic-token (and username password))
-      (invalid! "Provide username/password credentials or a Basic token." :authentication))
+    (when-not (and username password)
+      (invalid! "Username and password are required." :authentication))
     {:base-url                (valid-base-url (:base-url details))
      :catalog                 catalog
      :schema                  schema
      :username                username
      :password                password
-     :basic-token             basic-token
      :compute-size            (compute-size (:compute-size details))
      :connect-timeout-seconds (positive-integer (:connect-timeout-seconds details)
                                                 default-connect-timeout-seconds
@@ -90,7 +88,7 @@
 
 (defn details->client
   ^LakehouseClient [details]
-  (let [{:keys [base-url username password basic-token
+  (let [{:keys [base-url username password
                 connect-timeout-seconds request-timeout-seconds]}
         (normalize-details details)
         config (doto (LakehouseClient$Config.)
@@ -98,9 +96,7 @@
                  (.connectTimeout (Duration/ofSeconds connect-timeout-seconds))
                  (.requestTimeout (Duration/ofSeconds request-timeout-seconds))
                  (.userAgentSuffix "metabase-altertable-driver/0.1.0"))]
-    (if basic-token
-      (.basicToken config basic-token)
-      (.credentials config username password))
+    (.credentials config username password)
     (LakehouseClient. config)))
 
 (defn compute-size-enum
@@ -168,6 +164,17 @@
         session-id (some-> metadata (.get "session_id") .asText)]
     (when (and (non-blank query-id) (non-blank session-id))
       (.cancelQuery lakehouse-client (java.util.UUID/fromString query-id) session-id))))
+
+(defn test-connection!
+  "Verify credentials and catalog access by running a lightweight query."
+  [details]
+  (let [^LakehouseClient client (details->client details)]
+    (try
+      (with-open [^LakehouseClient$QueryResult _result
+                  (.query client (query-request details {:query "SELECT 1 AS ok"}))]
+        true)
+      (catch LakehouseClient$LakehouseException error
+        (throw (sdk-exception error))))))
 
 (defn execute-query!
   "Execute a native query and pass Metabase column metadata plus a single-use

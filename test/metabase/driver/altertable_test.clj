@@ -1,11 +1,16 @@
 (ns metabase.driver.altertable-test
   (:require
+   [clojure.string :as str]
    [clojure.test :refer :all]
    [metabase.driver :as driver]
    [metabase.driver.altertable]
    [metabase.driver.altertable.client :as client]
    [metabase.driver-api.core :as driver-api]
-   [metabase.driver.connection :as driver.conn]))
+   [metabase.driver.connection :as driver.conn]
+   [metabase.driver.settings :as driver.settings]
+   [metabase.driver.sql.query-processor :as sql.qp]
+   [metabase.driver.util :as driver.u]
+   [metabase.query-processor.timezone :as qp.timezone]))
 
 (deftest driver-registration-test
   (is (driver/available? :altertable)))
@@ -16,15 +21,76 @@
                                                   :username "alice"
                                                   :password "secret"})))))
 
+(def ^:private expected-supported-features
+  #{:advanced-math-expressions
+    :basic-aggregations
+    :binning
+    :case-sensitivity-string-filter-options
+    :date-arithmetics
+    :datetime-diff
+    :describe-fields
+    :distinct-where
+    :expression-aggregations
+    :expressions
+    :expressions/date
+    :expressions/datetime
+    :expressions/text
+    :expressions/today
+    :fingerprint
+    :full-join
+    :inner-join
+    :left-join
+    :metadata/table-existence-check
+    :native-parameters
+    :native-temporal-units
+    :nested-queries
+    :now
+    :percentile-aggregations
+    :regex
+    :right-join
+    :schemas
+    :standard-deviation-aggregations
+    :temporal-extract
+    :window-functions/cumulative
+    :window-functions/offset})
+
+(def ^:private expected-unsupported-features
+  #{:actions
+    :actions/custom
+    :actions/data-editing
+    :atomic-renames
+    :connection-impersonation
+    :convert-timezone
+    :create-or-replace-table
+    :database-routing
+    :dependencies/native
+    :metadata/key-constraints
+    :metadata/table-writable-check
+    :native-parameter-card-reference
+    :parameterized-sql
+    :parameters/table-reference
+    :persist-models
+    :rename
+    :set-timezone
+    :table-privileges
+    :transforms/python
+    :transforms/table
+    :uploads})
+
 (deftest read-only-capabilities-test
-  (doseq [feature [:database-routing
-                   :dependencies/native
-                   :metadata/key-constraints
-                   :parameterized-sql
-                   :persist-models
-                   :uploads]]
+  (doseq [feature expected-supported-features]
+    (is (true? (driver/database-supports? :altertable feature nil))
+        (str feature " must be advertised")))
+  (doseq [feature expected-unsupported-features]
     (is (false? (driver/database-supports? :altertable feature nil))
         (str feature " must not be advertised"))))
+
+(deftest report-timezone-capability-gate-test
+  (testing "report timezone stays gated off until QueryRequest.timezone is honored"
+    (is (false? (driver.u/supports? :altertable :set-timezone nil)))
+    (with-redefs [driver.settings/report-timezone (constantly "Europe/Paris")]
+      (is (nil? (qp.timezone/report-timezone-id-if-supported :altertable
+                                                             {:id 1 :engine :altertable :details {}}))))))
 
 (deftest normalize-db-details-test
   (is (= {:details {:catalog "lake"
@@ -88,6 +154,20 @@
         (is (= "id" (get-in metadata [:cols 0 :name])))
         (is (= [[1]] rows))))))
 
+(deftest execute-reducible-query-rejects-bind-params-test
+  (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                        #"inlined parameters"
+                        (driver/execute-reducible-query :altertable
+                                                        {:native {:query "SELECT ?" :params [1]}}
+                                                        {:canceled-chan nil}
+                                                        (fn [_ _]))))
+  (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                        #"unbound parameter placeholders"
+                        (driver/execute-reducible-query :altertable
+                                                        {:native {:query "SELECT ?"}}
+                                                        {:canceled-chan nil}
+                                                        (fn [_ _])))))
+
 (deftest query-result-metadata-test
   (with-redefs [client/query-result-metadata (constantly [{:name "id" :base_type :type/Integer}])]
     (is (= [{:name "id" :base_type :type/Integer}]
@@ -130,3 +210,54 @@
 
 (deftest describe-fields-capability-test
   (is (true? (driver/database-supports? :altertable :describe-fields nil))))
+
+(deftest native-template-parameter-inlining-test
+  (testing "HoneySQL inlining escapes quotes so executable SQL has no bind params"
+    (driver/with-driver :altertable
+      (let [[sql & params] (sql.qp/format-honeysql
+                            :altertable
+                            {:select [[:*]]
+                             :from   [[:events]]
+                             :where  [:= :label "O'Reilly; DROP TABLE events--"]})]
+        (is (empty? params))
+        (is (not (str/includes? sql "?")))
+        (is (re-find #"O''Reilly; DROP TABLE events--" sql)
+            "quotes in substituted values must be escaped")))))
+
+(deftest syncable-schemas-test
+  (with-redefs [client/list-schemas! (constantly ["main" "analytics" "temp"])]
+    (is (= #{"main" "analytics" "temp"}
+           (driver/syncable-schemas :altertable
+                                    {:engine :altertable
+                                     :details {:catalog "lake"
+                                               :username "alice"
+                                               :password "secret"}})))
+    (is (= #{"main"}
+           (driver/syncable-schemas :altertable
+                                    {:engine :altertable
+                                     :details {:catalog "lake"
+                                               :username "alice"
+                                               :password "secret"
+                                               :schema-filters-type "inclusion"
+                                               :schema-filters-patterns "main"}})))))
+
+(deftest describe-database-respects-schema-filters-not-default-schema-test
+  (with-redefs [client/list-tables! (constantly [{:schema "main" :name "a"}
+                                                 {:schema "analytics" :name "b"}])]
+    (is (= #{{:schema "main" :name "a"} {:schema "analytics" :name "b"}}
+           (:tables (driver/describe-database* :altertable
+                                               {:engine :altertable
+                                                :details {:catalog "lake"
+                                                          :schema "main"
+                                                          :username "alice"
+                                                          :password "secret"}})))
+        "default query schema must not hide other schemas during sync")
+    (is (= #{{:schema "main" :name "a"}}
+           (:tables (driver/describe-database* :altertable
+                                               {:engine :altertable
+                                                :details {:catalog "lake"
+                                                          :schema "main"
+                                                          :username "alice"
+                                                          :password "secret"
+                                                          :schema-filters-type "inclusion"
+                                                          :schema-filters-patterns "main"}}))))))

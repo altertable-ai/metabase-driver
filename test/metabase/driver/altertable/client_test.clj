@@ -91,3 +91,26 @@
                         #"Catalog is required"
                         (client/test-connection! {:username "alice"
                                                   :password "secret"}))))
+
+(deftest normalize-details-preserves-schema-filters-test
+  (is (= "inclusion"
+         (:schema-filters-type
+          (client/normalize-details {:catalog "lake"
+                                     :username "alice"
+                                     :password "secret"
+                                     :schema-filters-type "inclusion"
+                                     :schema-filters-patterns "main,analytics"}))))
+  (is (= "main,analytics"
+         (:schema-filters-patterns
+          (client/sanitize-details {:catalog "lake"
+                                    :username "alice"
+                                    :password "secret"
+                                    :schema-filters-type "inclusion"
+                                    :schema-filters-patterns "main,analytics"})))))
+
+(deftest list-tables-sql-ignores-default-schema-test
+  (testing "default query schema must not restrict table discovery SQL"
+    (let [sql (#'client/list-tables-sql {:catalog "memory" :schema "main"})]
+      (is (re-find #"table_catalog = 'memory'" sql))
+      (is (not (re-find #"table_schema = 'main'" sql)))
+      (is (re-find #"BASE TABLE',\s*'VIEW'" sql)))))

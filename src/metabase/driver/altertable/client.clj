@@ -59,6 +59,15 @@
       (invalid! "Compute size must be one of AUTO, XS, S, M, L, or XL." :compute-size))
     size))
 
+(defn- schema-filter-settings
+  "Preserve Metabase schema-filters connection settings across normalization."
+  [details]
+  (let [filter-type     (non-blank (:schema-filters-type details))
+        filter-patterns (non-blank (:schema-filters-patterns details))]
+    (cond-> {}
+      filter-type     (assoc :schema-filters-type filter-type)
+      filter-patterns (assoc :schema-filters-patterns filter-patterns))))
+
 (defn normalize-details
   "Validate and normalize Metabase connection details without retaining any
   secret in exception data."
@@ -73,18 +82,20 @@
       (invalid! "Both username and password must be provided together." :username))
     (when-not (and username password)
       (invalid! "Username and password are required." :authentication))
-    {:base-url                (valid-base-url (:base-url details))
-     :catalog                 catalog
-     :schema                  schema
-     :username                username
-     :password                password
-     :compute-size            (compute-size (:compute-size details))
-     :connect-timeout-seconds (positive-integer (:connect-timeout-seconds details)
-                                                default-connect-timeout-seconds
-                                                :connect-timeout-seconds)
-     :request-timeout-seconds (positive-integer (:request-timeout-seconds details)
-                                                default-request-timeout-seconds
-                                                :request-timeout-seconds)}))
+    (merge
+     {:base-url                (valid-base-url (:base-url details))
+      :catalog                 catalog
+      :schema                  schema
+      :username                username
+      :password                password
+      :compute-size            (compute-size (:compute-size details))
+      :connect-timeout-seconds (positive-integer (:connect-timeout-seconds details)
+                                                 default-connect-timeout-seconds
+                                                 :connect-timeout-seconds)
+      :request-timeout-seconds (positive-integer (:request-timeout-seconds details)
+                                                 default-request-timeout-seconds
+                                                 :request-timeout-seconds)}
+     (schema-filter-settings details))))
 
 (defn sanitize-details
   "Best-effort normalization for persisted database details."
@@ -257,17 +268,39 @@
       (catch LakehouseClient$LakehouseException error
         (throw (sdk-exception error))))))
 
+(def ^:private system-schemas
+  #{"information_schema" "pg_catalog"})
+
+(def ^:private syncable-table-types-sql
+  "table_type IN ('BASE TABLE', 'VIEW')")
+
 (defn- list-tables-sql
-  [{:keys [catalog schema]}]
+  [{:keys [catalog]}]
   (str "SELECT table_schema, table_name\n"
        "FROM information_schema.tables\n"
-       "WHERE table_type = 'BASE TABLE'\n"
+       "WHERE " syncable-table-types-sql "\n"
        "  AND table_catalog = " (sql-string-literal catalog) "\n"
-       (when schema (str "  AND table_schema = " (sql-string-literal schema) "\n"))
        "ORDER BY table_schema, table_name"))
 
+(defn- list-schemas-sql
+  [{:keys [catalog]}]
+  (str "SELECT schema_name\n"
+       "FROM information_schema.schemata\n"
+       "WHERE catalog_name = " (sql-string-literal catalog) "\n"
+       "ORDER BY schema_name"))
+
+(defn list-schemas!
+  "Return syncable schema names in the configured catalog."
+  [details]
+  (let [normalized (normalize-details details)]
+    (into []
+          (comp (map first)
+                (filter non-blank)
+                (remove system-schemas))
+          (query-all-rows! normalized {:query (list-schemas-sql normalized)}))))
+
 (defn list-tables!
-  "Return user tables in the configured catalog, optionally limited to a schema."
+  "Return user tables in the configured catalog."
   [details]
   (let [normalized (normalize-details details)]
     (map (fn [[table-schema table-name]]
@@ -285,7 +318,7 @@
         (query-all-rows! normalized
                          {:query (str "SELECT table_schema\n"
                                        "FROM information_schema.tables\n"
-                                       "WHERE table_type = 'BASE TABLE'\n"
+                                       "WHERE " syncable-table-types-sql "\n"
                                        "  AND table_catalog = "
                                        (sql-string-literal (:catalog normalized))
                                        "\n"
@@ -331,11 +364,10 @@
                   :database-position (dec (long ordinal-position))}))}))
 
 (defn- describe-fields-sql
-  [{:keys [catalog schema]} {:keys [schema-names table-names]}]
+  [{:keys [catalog]} {:keys [schema-names table-names]}]
   (str "SELECT table_schema, table_name, column_name, data_type, ordinal_position\n"
        "FROM information_schema.columns\n"
        "WHERE table_catalog = " (sql-string-literal catalog) "\n"
-       (when schema (str "  AND table_schema = " (sql-string-literal schema) "\n"))
        (when (seq schema-names)
          (str "  AND table_schema IN (" (sql-in-list schema-names) ")\n"))
        (when (seq table-names)
@@ -362,7 +394,7 @@
   [{:keys [catalog]} table-schema table-name]
   (str "SELECT 1\n"
        "FROM information_schema.tables\n"
-       "WHERE table_type = 'BASE TABLE'\n"
+       "WHERE " syncable-table-types-sql "\n"
        "  AND table_catalog = " (sql-string-literal catalog) "\n"
        "  AND table_schema = " (sql-string-literal table-schema) "\n"
        "  AND table_name = " (sql-string-literal table-name) "\n"

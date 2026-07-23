@@ -30,6 +30,11 @@ driver:
       required: false
       visible-if:
         advanced-options: true
+    - name: schema-filters
+      type: schema-filters
+      display-name: Schemas
+      visible-if:
+        advanced-options: true
     - name: compute-size
       display-name: Compute size (AUTO, XS, S, M, L, or XL)
       type: string

@@ -39,13 +39,13 @@ driver:
     - name: connect-timeout-seconds
       display-name: Connection timeout (seconds)
       type: string
-      default: "5"
+      default: '5'
       visible-if:
         advanced-options: true
     - name: request-timeout-seconds
       display-name: Query timeout (seconds)
       type: string
-      default: "60"
+      default: '60'
       visible-if:
         advanced-options: true
 init:

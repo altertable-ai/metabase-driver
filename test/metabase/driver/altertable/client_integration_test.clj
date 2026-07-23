@@ -45,6 +45,22 @@
     (is (= 401 (:status-code (ex-data error))))
     (is (not (re-find (re-pattern secret) (pr-str error))))))
 
+(deftest ^:integration catalog-has-tables-test
+  (let [details    (mock-details)
+        table-name (str "metabase_driver_tables_test_" (System/currentTimeMillis))]
+    (client/execute-query!
+     details
+     {:query (str "CREATE TABLE " table-name " (id INTEGER, label VARCHAR)")}
+     nil
+     (fn [_ rows] (into [] rows)))
+    (let [tables (client/list-tables! details)]
+      (is (pos? (count tables))
+          "expected the catalog to expose at least one table")
+      (is (some #(= table-name (:name %)) tables)
+          (str "expected to find created table " table-name)))
+    (let [{:keys [fields]} (client/describe-table! details {:name table-name :schema "main"})]
+      (is (= #{"id" "label"} (set (map :name fields)))))))
+
 (deftest ^:integration cancellation-uses-stream-identifiers-test
   (let [cancel-chan (async/chan 1)
         canceled    (promise)]

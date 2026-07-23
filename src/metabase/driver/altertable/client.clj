@@ -5,8 +5,8 @@
    [metabase.driver.altertable.results :as results])
   (:import
    (ai.altertable.lakehouse LakehouseClient LakehouseClient$ComputeSize LakehouseClient$Config
-                            LakehouseClient$LakehouseException LakehouseClient$QueryRequest
-                            LakehouseClient$QueryResult)
+                            LakehouseClient$LakehouseException LakehouseClient$QueryAllResult
+                            LakehouseClient$QueryRequest LakehouseClient$QueryResult)
    (com.fasterxml.jackson.databind JsonNode)
    (java.net URI)
    (java.time Duration)))
@@ -201,4 +201,37 @@
       (catch LakehouseClient$LakehouseException error
         (throw (sdk-exception error)))
       (finally
+(defn- table-schema
+  [details {:keys [schema]}]
+  (or schema
+      (:schema (normalize-details details))
+      (invalid! "Table schema is required." :schema)))
+
+(defn- describe-table-sql
+  [{:keys [catalog]} table-schema table-name]
+  (str "SELECT column_name, data_type, ordinal_position\n"
+       "FROM information_schema.columns\n"
+       "WHERE table_catalog = " (sql-string-literal catalog) "\n"
+       "  AND table_schema = " (sql-string-literal table-schema) "\n"
+       "  AND table_name = " (sql-string-literal table-name) "\n"
+       "ORDER BY ordinal_position"))
+
+(defn describe-table!
+  "Return column metadata for a table in the configured catalog."
+  [details {:keys [name schema] :as table}]
+  (let [normalized    (normalize-details details)
+        table-schema* (table-schema normalized table)]
+    {:name   name
+     :schema schema
+     :fields (set
+               (for [[column-name database-type ordinal-position]
+                     (query-all-rows! normalized
+                                      {:query (describe-table-sql normalized
+                                                                  table-schema*
+                                                                  name)})]
+                 {:name              column-name
+                  :database-type     database-type
+                  :base-type         (results/database-type->base-type database-type)
+                  :database-position (dec (long ordinal-position))}))}))
+
         (async/close! done-chan)))))

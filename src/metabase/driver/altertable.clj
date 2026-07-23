@@ -9,6 +9,14 @@
   [_driver details]
   (client/test-connection! details))
 
+(defmethod driver/describe-database* :altertable
+  [_driver database]
+  {:tables (set (client/list-tables! (:details database)))})
+
+(defmethod driver/describe-table :altertable
+  [_driver database table]
+  (client/describe-table! (:details database) table))
+
 (doseq [feature [:database-routing
                  :dependencies/native
                  :metadata/key-constraints

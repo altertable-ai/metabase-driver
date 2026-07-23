@@ -3,27 +3,40 @@
 An open-source [Metabase](https://www.metabase.com/) driver for querying an
 [Altertable](https://altertable.ai/) Lakehouse catalog.
 
-> [!IMPORTANT]
-> This project is in early development. The read-only transport and result
-> processing foundation is implemented, but schema synchronization, Metabase
-> query execution wiring, and end-to-end Metabase validation are still in
-> progress. It is not yet ready for production use.
+> [!NOTE]
+> This driver is read-only: it connects, syncs metadata, and runs queries
+> against an Altertable Lakehouse catalog. It does not perform writes, DDL,
+> uploads, or other database-management operations.
 
-## Project status
+## Features
 
-The driver currently provides:
-
-- registration as a read-only Metabase SQL driver;
+- registration as a read-only Metabase SQL driver (`:sql` parent, HTTP transport);
 - validation and normalization of Altertable connection settings;
-- authentication with either username/password or a basic token;
+- authentication with username and password;
 - streaming query execution through the Altertable Lakehouse Java SDK;
 - cancellation and timeout primitives;
+- DuckDB-compatible MBQL → SQL compilation (temporal buckets, intervals,
+  datetime-diff, Unix timestamps, regex extraction) with safe parameter inlining;
+- schema synchronization via `information_schema`, including ordinary views;
+- syncable-schema listing and Metabase schema inclusion/exclusion filters;
 - conversion of Altertable result values to Metabase-friendly Java values;
 - database-type mapping and conservative fallback type inference; and
 - unit and mock-backed integration tests against Metabase `v0.61.2`.
 
-Work remaining before the first usable release includes metadata
-synchronization and MBQL-to-SQL execution integration.
+### Supported read capabilities
+
+GUI / MBQL questions can use filters, joins, nested queries, expressions, basic
+and advanced aggregations (including percentiles and standard deviation), window
+functions, date arithmetic/extracts, and regex extraction. Native SQL questions
+support `{{parameter}}` template tags through Metabase's SQL substitution path;
+compiled SQL is always fully inlined before it reaches the Lakehouse API.
+
+### Intentionally unsupported
+
+Write, DDL, upload, persistence, actions, transforms, database routing, foreign-key
+metadata sync, and JDBC-style bind parameters remain disabled. Report timezone
+(`:set-timezone`) stays disabled until the Lakehouse API honors
+`QueryRequest.timezone` for DuckDB session semantics.
 
 ## Read-only scope
 
@@ -38,20 +51,24 @@ to read the intended catalogs and schemas.
 
 Metabase will expose the following settings when the plugin is installed:
 
-| Setting | Description |
-| --- | --- |
-| API URL | Altertable API endpoint; defaults to `https://api.altertable.ai` |
-| Catalog | Lakehouse catalog to query |
-| Default schema | Optional schema used when a query does not qualify a table |
-| Username and password | Standard credentials; both values must be supplied together |
-| Basic token | Alternative to username/password authentication |
-| Compute size | `AUTO`, `XS`, `S`, `M`, `L`, or `XL` |
-| Connection timeout | Time allowed to establish a connection, in seconds |
-| Query timeout | Time allowed for a request, in seconds |
+| Setting               | Description                                                                 |
+| --------------------- | --------------------------------------------------------------------------- |
+| Catalog               | Lakehouse catalog to query                                                  |
+| Username and password | Credentials; both values must be supplied together                          |
+| API URL               | Altertable API endpoint; defaults to `https://api.altertable.ai` (advanced) |
+| Schema                | Optional default schema for unqualified query names (advanced)              |
+| Schemas               | Optional sync inclusion/exclusion filters (advanced)                        |
+| Compute size          | `AUTO`, `XS`, `S`, `M`, `L`, or `XL` (advanced)                             |
+| Connection timeout    | Time allowed to establish a connection, in seconds (advanced)               |
+| Query timeout         | Time allowed for a request, in seconds (advanced)                           |
 
-Supply exactly one authentication method. Secrets are passed to the SDK but
-are omitted from validation errors and sanitized from SDK failures before an
-error reaches Metabase.
+Username and password are required. Secrets are passed to the SDK but are omitted
+from validation errors and sanitized from SDK failures before an error reaches
+Metabase.
+
+The optional **Schema** setting is only the default query schema. It does not
+limit which schemas Metabase synchronizes. Use the **Schemas** filter controls to
+include or exclude schemas during sync.
 
 ## Development
 
@@ -126,8 +143,11 @@ and update its release pull request with `GITHUB_TOKEN`.
 ## Architecture
 
 - `metabase.driver.altertable` registers the driver and its capabilities.
+- `metabase.driver.altertable.query-processor` provides DuckDB-compatible
+  HoneySQL overrides and safe parameter inlining.
 - `metabase.driver.altertable.client` owns connection validation, SDK client
-  construction, query requests, streaming, cancellation, and error handling.
+  construction, query requests, streaming, cancellation, metadata sync helpers,
+  and error handling.
 - `metabase.driver.altertable.results` maps Altertable metadata and values to
   Metabase result rows and base types.
 - `resources/metabase-plugin.yaml` defines the Metabase plugin and connection
@@ -135,9 +155,7 @@ and update its release pull request with `GITHUB_TOKEN`.
 
 The implementation follows Metabase's
 [driver development guide](https://www.metabase.com/docs/latest/developers-guide/drivers/start)
-and uses the
-[`metabase/sudoku-driver`](https://github.com/metabase/sudoku-driver) project
-as a small reference implementation.
+and compiles DuckDB-compatible SQL over Altertable's HTTP transport.
 
 ## Contributing
 

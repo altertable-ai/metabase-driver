@@ -8,16 +8,9 @@ driver:
   lazy-load: true
   parent: sql
   connection-properties:
-    - name: base-url
-      display-name: API URL
-      default: https://api.altertable.ai
-      required: true
     - name: catalog
       display-name: Catalog
       required: true
-    - name: schema
-      display-name: Default schema
-      required: false
     - name: username
       display-name: Username
       required: false
@@ -25,11 +18,23 @@ driver:
       display-name: Password
       type: password
       required: false
-    - name: basic-token
-      display-name: Basic token
-      type: password
-      required: false
     - advanced-options-start
+    - name: base-url
+      display-name: API URL
+      default: https://api.altertable.ai
+      required: false
+      visible-if:
+        advanced-options: true
+    - name: schema
+      display-name: Schema
+      required: false
+      visible-if:
+        advanced-options: true
+    - name: schema-filters
+      type: schema-filters
+      display-name: Schemas
+      visible-if:
+        advanced-options: true
     - name: compute-size
       display-name: Compute size (AUTO, XS, S, M, L, or XL)
       type: string

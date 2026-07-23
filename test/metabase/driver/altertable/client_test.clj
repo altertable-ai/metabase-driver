@@ -4,13 +4,12 @@
    [metabase.driver.altertable.client :as client]))
 
 (deftest normalize-details-test
-  (testing "normalizes defaults and basic credentials"
+  (testing "normalizes defaults and credentials"
     (is (= {:base-url               "https://api.altertable.ai"
             :catalog                "analytics"
             :schema                 nil
             :username               "alice"
             :password               "secret"
-            :basic-token            nil
             :compute-size           :AUTO
             :connect-timeout-seconds 5
             :request-timeout-seconds 60}
@@ -18,24 +17,26 @@
                                       :username "alice"
                                       :password "secret"}))))
 
-  (testing "accepts token authentication and trims an optional schema"
+  (testing "trims an optional schema"
     (is (= "reporting"
            (:schema (client/normalize-details {:catalog "lake"
                                                :schema " reporting "
-                                               :basic-token "opaque"})))))
+                                               :username "alice"
+                                               :password "secret"})))))
 
   (testing "requires a catalog"
     (is (thrown-with-msg? clojure.lang.ExceptionInfo
                           #"Catalog is required"
-                          (client/normalize-details {:basic-token "opaque"}))))
+                          (client/normalize-details {:username "alice"
+                                                     :password "secret"}))))
 
-  (testing "requires one complete authentication method"
+  (testing "requires username and password together"
     (is (thrown-with-msg? clojure.lang.ExceptionInfo
                           #"username and password"
                           (client/normalize-details {:catalog "lake"
                                                      :username "alice"})))
     (is (thrown-with-msg? clojure.lang.ExceptionInfo
-                          #"credentials or a Basic token"
+                          #"Username and password are required"
                           (client/normalize-details {:catalog "lake"}))))
 
   (testing "rejects malformed URLs without leaking secrets"
@@ -43,7 +44,8 @@
           error  (try
                    (client/normalize-details {:catalog "lake"
                                               :base-url "not a URL"
-                                              :basic-token secret})
+                                              :username "alice"
+                                              :password secret})
                    nil
                    (catch Exception e e))]
       (is (some? error))
@@ -56,13 +58,15 @@
     (is (thrown-with-msg? clojure.lang.ExceptionInfo
                           #"positive integer"
                           (client/normalize-details {:catalog "lake"
-                                                     :basic-token "opaque"
+                                                     :username "alice"
+                                                     :password "secret"
                                                      option value})))))
 
 (deftest query-request-test
   (let [request (client/query-request {:catalog "lake"
                                        :schema "reporting"
-                                       :basic-token "opaque"
+                                       :username "alice"
+                                       :password "secret"
                                        :compute-size "M"}
                                       {:query "SELECT 1"
                                        :max-rows 25
@@ -81,3 +85,32 @@
     (is (false? (.visible request)))
     (is (= "metabase" (.requestedBy request)))
     (is (= "duckdb" (.dialect request)))))
+
+(deftest test-connection-validates-details-test
+  (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                        #"Catalog is required"
+                        (client/test-connection! {:username "alice"
+                                                  :password "secret"}))))
+
+(deftest normalize-details-preserves-schema-filters-test
+  (is (= "inclusion"
+         (:schema-filters-type
+          (client/normalize-details {:catalog "lake"
+                                     :username "alice"
+                                     :password "secret"
+                                     :schema-filters-type "inclusion"
+                                     :schema-filters-patterns "main,analytics"}))))
+  (is (= "main,analytics"
+         (:schema-filters-patterns
+          (client/sanitize-details {:catalog "lake"
+                                    :username "alice"
+                                    :password "secret"
+                                    :schema-filters-type "inclusion"
+                                    :schema-filters-patterns "main,analytics"})))))
+
+(deftest list-tables-sql-ignores-default-schema-test
+  (testing "default query schema must not restrict table discovery SQL"
+    (let [sql (#'client/list-tables-sql {:catalog "memory" :schema "main"})]
+      (is (re-find #"table_catalog = 'memory'" sql))
+      (is (not (re-find #"table_schema = 'main'" sql)))
+      (is (re-find #"BASE TABLE',\s*'VIEW'" sql)))))

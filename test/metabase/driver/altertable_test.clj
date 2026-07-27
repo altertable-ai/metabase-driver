@@ -163,8 +163,14 @@
                                                         (fn [_ _])))))
 
 (deftest query-result-metadata-test
-  (with-redefs [client/query-result-metadata (constantly [{:name "id" :base_type :type/Integer}])]
-    (is (= [{:name "id" :base_type :type/Integer}]
+  (with-redefs [client/query-result-metadata (constantly [{:lib/type      :metadata/column
+                                                           :name          "id"
+                                                           :database-type "INTEGER"
+                                                           :base-type     :type/Integer}])]
+    (is (= [{:lib/type      :metadata/column
+             :name          "id"
+             :database-type "INTEGER"
+             :base-type     :type/Integer}]
            (driver/query-result-metadata :altertable
                                          {:database {:details {:catalog "lake"
                                                                :username "alice"

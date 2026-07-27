@@ -34,14 +34,20 @@
            ["DOUBLE" :type/Float]
            ["VARCHAR" :type/Text]
            ["DATE" :type/Date]
+           ["TIME_NS" :type/Time]
            ["TIME WITH TIME ZONE" :type/TimeWithTZ]
            ["TIMESTAMP" :type/DateTime]
+           ["TIMESTAMP_S" :type/DateTime]
+           ["TIMESTAMP_MS" :type/DateTime]
+           ["TIMESTAMP_NS" :type/DateTime]
            ["TIMESTAMPTZ" :type/DateTimeWithTZ]
            ["JSON" :type/JSON]
+           ["VARIANT" :type/JSON]
            ["INTEGER[]" :type/Array]
            ["STRUCT(name VARCHAR)" :type/Dictionary]
            ["MAP(VARCHAR, INTEGER)" :type/Dictionary]
            ["UUID" :type/UUID]
+           ["UHUGEINT" :type/Integer]
            ["BLOB" :type/*]
            ["SOMETHING_NEW" :type/*]]]
     (is (= expected (results/database-type->base-type database-type)) database-type)))
@@ -58,6 +64,33 @@
          (get-in (results/infer-column-metadata ["empty"] []) [:cols 0 :base_type])))
   (is (= :type/*
          (get-in (results/infer-column-metadata ["mixed"] [[1] ["one"]]) [:cols 0 :base_type]))))
+
+(deftest column-metadata-uses-live-names-and-described-types-test
+  (is (= {:cols [{:name           "live_d"
+                  :database_type  "DATE"
+                  :base_type      :type/Date
+                  :effective_type :type/Date}
+                 {:name           "live_ts"
+                  :database_type  "TIMESTAMP"
+                  :base_type      :type/DateTime
+                  :effective_type :type/DateTime}
+                 {:name           "live_measurement"
+                  :database_type  "DOUBLE"
+                  :base_type      :type/Float
+                  :effective_type :type/Float}]}
+         (results/column-metadata ["live_d" "live_ts" "live_measurement"]
+                                  [["2024-01-15" "2024-01-15T13:45:00" 1.5M]]
+                                  [{:name "described_d"
+                                    :database-type "DATE"
+                                    :base-type :type/Date}
+                                   {:name "described_ts"
+                                    :database-type "TIMESTAMP"
+                                    :base-type :type/DateTime}
+                                   {:name "described_measurement"
+                                    :database-type "DOUBLE"
+                                    :base-type :type/Float}])))
+  (is (= (results/infer-column-metadata ["id"] [[1]])
+         (results/column-metadata ["id"] [[1]] nil))))
 
 (deftest rows-reducible-closes-resource-test
   (let [closed?   (atom false)

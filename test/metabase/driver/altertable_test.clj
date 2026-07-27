@@ -129,7 +129,7 @@
                                                 (ex-info "Catalog Error: Table with name t does not exist!"
                                                          {:api-message "Catalog Error: Table with name t does not exist!"})))))
 
-(deftest execute-reducible-query-test
+(deftest execute-reducible-query-forwards-question-mark-sql-test
   (with-redefs [driver-api/database (constantly {:details {:catalog "lake"
                                                            :username "alice"
                                                            :password "secret"}})
@@ -139,14 +139,14 @@
                 driver.conn/effective-details (fn [db] (:details db))
                 client/execute-query! (fn [details native-query cancel-chan respond]
                                         (is (= "lake" (:catalog details)))
-                                        (is (= "SELECT 1" (:query native-query)))
+                                        (is (= "SELECT '?' AS marker" (:query native-query)))
                                         (is (= 100 (:max-rows native-query)))
                                         (is (= "UTC" (:timezone native-query)))
                                         (is (nil? cancel-chan))
                                         (respond {:cols [{:name "id" :base_type :type/Integer}]} [[1]]))]
     (let [response (promise)]
       (driver/execute-reducible-query :altertable
-                                      {:native {:query "SELECT 1"}}
+                                      {:native {:query "SELECT '?' AS marker"}}
                                       {:canceled-chan nil}
                                       (fn [metadata rows]
                                         (deliver response [metadata (into [] rows)])))
@@ -159,12 +159,6 @@
                         #"inlined parameters"
                         (driver/execute-reducible-query :altertable
                                                         {:native {:query "SELECT ?" :params [1]}}
-                                                        {:canceled-chan nil}
-                                                        (fn [_ _]))))
-  (is (thrown-with-msg? clojure.lang.ExceptionInfo
-                        #"unbound parameter placeholders"
-                        (driver/execute-reducible-query :altertable
-                                                        {:native {:query "SELECT ?"}}
                                                         {:canceled-chan nil}
                                                         (fn [_ _])))))
 

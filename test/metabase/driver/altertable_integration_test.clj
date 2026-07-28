@@ -101,11 +101,91 @@
       (is (= [["Etc/UTC"]] @response)
           "Keep :set-timezone false until this returns Europe/Paris"))))
 
-(deftest ^:integration query-result-metadata-test
-  (let [details (mock-details)
-        [col]   (client/query-result-metadata details "SELECT 42 AS answer")]
-    (is (= "answer" (:name col)))
-    (is (= :type/Integer (:base_type col)))))
+(deftest ^:integration query-result-metadata-tolerates-trailing-sql-noise-test
+  (doseq [[description query-sql]
+          [["no trailing noise"                 "SELECT 42 AS answer"]
+           ["trailing semicolon"                "SELECT 42 AS answer;"]
+           ["trailing semicolon and spaces"     "SELECT 42 AS answer;   "]
+           ["trailing semicolon and newline"    "SELECT 42 AS answer;\n"]
+           ["trailing line comment"             "SELECT 42 AS answer -- note"]
+           ["semicolon inside a line comment"   "SELECT 42 AS answer -- note;\n"]
+           ["semicolon then trailing comment"   "SELECT 42 AS answer; -- note"]
+           ["semicolon then comment newline"    "SELECT 42 AS answer; -- note\n"]
+           ["commented out trailing statement"  "SELECT 42 AS answer\n-- SELECT * FROM customers;\n"]
+           ["trailing block comment"            "SELECT 42 AS answer /* note */"]]]
+    (testing description
+      (is (= [{:lib/type      :metadata/column
+               :name          "answer"
+               :database-type "INTEGER"
+               :base-type     :type/Integer}]
+             (client/query-result-metadata (mock-details) query-sql))))))
+
+(deftest ^:integration query-result-metadata-preserves-quoted-sql-test
+  (doseq [[description query-sql]
+          [["semicolon and dashes inside a literal" "SELECT 'has ; -- inside' AS s;"]
+           ["escaped quote inside a literal"        "SELECT 'it''s ; -- x' AS s;"]
+           ["dollar quoted literal"                 "SELECT $$has ; -- inside$$ AS s;"]]]
+    (testing description
+      (is (= [{:lib/type      :metadata/column
+               :name          "s"
+               :database-type "VARCHAR"
+               :base-type     :type/Text}]
+             (client/query-result-metadata (mock-details) query-sql)))))
+  (testing "double quoted identifier holding a semicolon and dashes"
+    (is (= [{:lib/type      :metadata/column
+             :name          "weird ; -- name"
+             :database-type "INTEGER"
+             :base-type     :type/Integer}]
+           (client/query-result-metadata (mock-details) "SELECT 1 AS \"weird ; -- name\";")))))
+
+(deftest ^:integration query-result-metadata-rejects-multiple-statements-without-executing-them-test
+  (doseq [[description query-format]
+          [["valid multiple statements"
+            "SELECT 42 AS answer; CREATE TABLE %s (id INTEGER)"]
+           ["balanced describe wrapper escape"
+            "SELECT 42 AS answer); CREATE TABLE %s (id INTEGER); SELECT (1"]]]
+    (testing description
+      (let [details    (mock-details)
+            table-name (str "metabase_driver_metadata_side_effect_" (System/nanoTime))]
+        (try
+          (is (= []
+                 (client/query-result-metadata details (format query-format table-name))))
+          (is (false? (client/table-exists? details {:name table-name :schema "main"})))
+          (finally
+            (when (client/table-exists? details {:name table-name :schema "main"})
+              (execute-sql! details (str "DROP TABLE " table-name)))))))))
+
+(deftest ^:integration query-result-metadata-uses-database-types-test
+  (is (= [{:lib/type      :metadata/column
+           :name          "d"
+           :database-type "DATE"
+           :base-type     :type/Date}
+          {:lib/type      :metadata/column
+           :name          "ts"
+           :database-type "TIMESTAMP"
+           :base-type     :type/DateTime}
+          {:lib/type      :metadata/column
+           :name          "tstz"
+           :database-type "TIMESTAMP WITH TIME ZONE"
+           :base-type     :type/DateTimeWithTZ}]
+         (client/query-result-metadata
+          (mock-details)
+          (str "SELECT DATE '2024-01-15' AS d, "
+               "TIMESTAMP '2024-01-15 13:45:00' AS ts, "
+               "TIMESTAMPTZ '2024-01-15 13:45:00+01:00' AS tstz")))))
+
+(deftest ^:integration query-result-metadata-does-not-require-rows-test
+  (is (= [{:lib/type      :metadata/column
+           :name          "d"
+           :database-type "DATE"
+           :base-type     :type/Date}
+          {:lib/type      :metadata/column
+           :name          "ts"
+           :database-type "TIMESTAMP"
+           :base-type     :type/DateTime}]
+         (client/query-result-metadata
+          (mock-details)
+          "SELECT NULL::DATE AS d, NULL::TIMESTAMP AS ts WHERE FALSE"))))
 
 (deftest ^:integration sanitize-details-trims-values-test
   (is (= {:catalog "memory"

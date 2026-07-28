@@ -47,15 +47,15 @@
           (re-find #"^TIMESTAMP.*WITH TIME ZONE" database-type)) :type/DateTimeWithTZ
       (or (= database-type "TIMETZ")
           (re-find #"^TIME.*WITH TIME ZONE" database-type)) :type/TimeWithTZ
-      (re-find #"^TIMESTAMP\b" database-type) :type/DateTime
-      (re-find #"^TIME\b" database-type) :type/Time
+      (re-find #"^TIMESTAMP(?:\b|_)" database-type) :type/DateTime
+      (re-find #"^TIME(?:\b|_)" database-type) :type/Time
       (= database-type "DATE") :type/Date
       (re-find #"^(DECIMAL|NUMERIC)\b" database-type) :type/Decimal
       (re-find #"^(REAL|FLOAT|DOUBLE)\b" database-type) :type/Float
-      (re-find #"^(TINYINT|SMALLINT|INTEGER|INT|BIGINT|HUGEINT|UTINYINT|USMALLINT|UINTEGER|UBIGINT)\b"
+      (re-find #"^(TINYINT|SMALLINT|INTEGER|INT|BIGINT|HUGEINT|UTINYINT|USMALLINT|UINTEGER|UBIGINT|UHUGEINT)\b"
                database-type) :type/Integer
       (re-find #"^(BOOLEAN|BOOL)\b" database-type) :type/Boolean
-      (= database-type "JSON") :type/JSON
+      (#{"JSON" "VARIANT"} database-type) :type/JSON
       (= database-type "UUID") :type/UUID
       (re-find #"^(VARCHAR|CHAR|BPCHAR|TEXT|STRING|ENUM)\b" database-type) :type/Text
       :else :type/*)))
@@ -100,6 +100,20 @@
               :effective_type base-type}))
          (range)
          column-names)})
+
+(defn column-metadata
+  "Return execution metadata from described columns, falling back to row inference."
+  [column-names rows described-columns]
+  (if (= (count column-names) (count described-columns))
+    {:cols
+     (mapv (fn [column-name {:keys [database-type base-type]}]
+             {:name           column-name
+              :database_type  database-type
+              :base_type      base-type
+              :effective_type base-type})
+           column-names
+           described-columns)}
+    (infer-column-metadata column-names rows)))
 
 (defn rows-reducible
   "Return a single-use reducible that emits `buffered-rows`, then `remaining`,

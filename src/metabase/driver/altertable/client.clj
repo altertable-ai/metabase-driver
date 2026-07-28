@@ -9,7 +9,9 @@
                             LakehouseClient$QueryRequest LakehouseClient$QueryResult)
    (com.fasterxml.jackson.databind JsonNode)
    (java.net URI)
-   (java.time Duration)))
+   (java.time Duration)
+   (net.sf.jsqlparser.parser CCJSqlParserUtil)
+   (net.sf.jsqlparser.statement.select Select)))
 
 (set! *warn-on-reflection* true)
 
@@ -418,26 +420,34 @@
           first
           str))
 
-(defn- metadata-query-sql [query-sql]
-  (str "SELECT * FROM (" query-sql ") AS _metabase_metadata LIMIT 1"))
+(defn- describe-query-sql [query-sql]
+  (try
+    (let [statements (.getStatements (CCJSqlParserUtil/parseStatements query-sql))
+          statement  (first statements)]
+      (when (and (= 1 (count statements))
+                 (instance? Select statement))
+        (str "DESCRIBE (" statement "\n)")))
+    (catch Exception _
+      nil)))
 
 (defn query-result-metadata
-  "Infer result column metadata for a native SQL query."
+  "Return metadata for a safely describable native SQL query, or an empty vector."
   [details query-sql]
-  (let [normalized (normalize-details details)
-        ^LakehouseClient client (details->client normalized)]
-    (try
-      (let [^LakehouseClient$QueryAllResult result
-            (.queryAll client (query-request normalized {:query (metadata-query-sql query-sql)}))
-            columns (vec (.columns result))
-            prefix  (mapv (fn [^java.util.List row]
-                            (mapv (fn [^JsonNode node]
-                                    (results/json-node->value node))
-                                  row))
-                          (.rows result))]
-        (:cols (results/infer-column-metadata columns prefix)))
-      (catch LakehouseClient$LakehouseException error
-        (throw (sdk-exception error))))))
+  (if-let [describe-sql (describe-query-sql query-sql)]
+    (let [details (normalize-details details)]
+      (mapv (fn [[column-name database-type]]
+              {:lib/type      :metadata/column
+               :name          column-name
+               :database-type database-type
+               :base-type     (results/database-type->base-type database-type)})
+            (query-all-rows! details {:query describe-sql})))
+    []))
+
+(defn- describe-query-result [details query-sql]
+  (try
+    (query-result-metadata details query-sql)
+    (catch clojure.lang.ExceptionInfo _
+      nil)))
 
 (defn test-connection!
   "Verify credentials and catalog access by running a lightweight query."
@@ -457,12 +467,15 @@
   (let [lakehouse-client (details->client details)
         done-chan        (async/chan 1)]
     (try
-      (let [^LakehouseClient$QueryResult query-result
+      (let [described-columns (describe-query-result details (:query native-query))
+            ^LakehouseClient$QueryResult query-result
             (.query lakehouse-client (query-request details native-query))
             metadata  (.metadata query-result)
             iterator  (converting-iterator (.iterator query-result))
-            prefix    (take-prefix! iterator 32)
             columns   (vec (.columns query-result))
+            prefix    (if (= (count columns) (count described-columns))
+                        []
+                        (take-prefix! iterator 32))
             row-source (results/rows-reducible prefix iterator query-result)]
         (when cancel-chan
           (async/thread
@@ -471,7 +484,7 @@
                 (try
                   (cancel-query! lakehouse-client metadata)
                   (catch Exception _))))))
-        (respond (results/infer-column-metadata columns prefix) row-source))
+        (respond (results/column-metadata columns prefix described-columns) row-source))
       (catch LakehouseClient$LakehouseException error
         (throw (sdk-exception error)))
       (finally

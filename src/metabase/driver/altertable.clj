@@ -1,6 +1,5 @@
 (ns metabase.driver.altertable
   (:require
-   [clojure.string :as str]
    [metabase.driver :as driver]
    [metabase.driver-api.core :as driver-api]
    [metabase.driver.altertable.client :as client]
@@ -76,10 +75,6 @@
     (throw (ex-info (tru "Altertable queries must be compiled with inlined parameters.")
                     {:type   qp.error-type/driver
                      :params (count params)})))
-  (when (str/includes? sql "?")
-    (throw (ex-info (tru "Altertable queries must not contain unbound parameter placeholders.")
-                    {:type qp.error-type/driver
-                     :sql  sql})))
   (let [database (driver-api/database (driver-api/metadata-provider))
         details  (driver.conn/effective-details database)
         max-rows (driver-api/determine-query-max-rows outer-query)

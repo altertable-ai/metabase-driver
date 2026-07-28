@@ -32,6 +32,54 @@
       (is (= [:type/Integer :type/Decimal] (mapv :base_type (:cols metadata))))
       (is (= [[1 1.25M]] rows)))))
 
+(deftest ^:integration execute-query-uses-declared-database-types-test
+  (let [response (promise)]
+    (client/execute-query!
+     (mock-details)
+     {:query (str "SELECT DATE '2024-01-15' AS d, "
+                  "TIMESTAMP '2024-01-15 13:45:00' AS ts, "
+                  "TIMESTAMPTZ '2024-01-15 13:45:00+01:00' AS tstz, "
+                  "1.5::DOUBLE AS measurement")}
+     nil
+     (fn [metadata rows]
+       (deliver response [metadata (into [] rows)])))
+    (let [[metadata _rows] @response]
+      (is (= [{:name          "d"
+               :database_type "DATE"
+               :base_type     :type/Date
+               :effective_type :type/Date}
+              {:name          "ts"
+               :database_type "TIMESTAMP"
+               :base_type     :type/DateTime
+               :effective_type :type/DateTime}
+              {:name          "tstz"
+               :database_type "TIMESTAMP WITH TIME ZONE"
+               :base_type     :type/DateTimeWithTZ
+               :effective_type :type/DateTimeWithTZ}
+              {:name          "measurement"
+               :database_type "DOUBLE"
+               :base_type     :type/Float
+               :effective_type :type/Float}]
+             (:cols metadata))))))
+
+(deftest ^:integration execute-query-falls-back-to-row-inference-for-unparsed-duckdb-sql-test
+  (let [details  (mock-details)
+        query-sql "FROM range(1) SELECT range AS n"
+        response (promise)]
+    (is (= [] (client/query-result-metadata details query-sql)))
+    (client/execute-query!
+     details
+     {:query query-sql}
+     nil
+     (fn [metadata rows]
+       (deliver response [metadata (into [] rows)])))
+    (let [[metadata rows] @response]
+      (is (= [{:name           "n"
+               :base_type      :type/Integer
+               :effective_type :type/Integer}]
+             (:cols metadata)))
+      (is (= [[0]] rows)))))
+
 (deftest ^:integration authentication-errors-are-sanitized-test
   (let [secret "definitely-not-valid"
         error  (try

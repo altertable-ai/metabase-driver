@@ -1,6 +1,6 @@
 info:
   name: Metabase Altertable Driver
-  version: 0.2.0
+  version: 0.2.1
   description: Allows Metabase to query an Altertable Lakehouse catalog.
 driver:
   name: altertable

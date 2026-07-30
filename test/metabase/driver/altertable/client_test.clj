@@ -62,6 +62,22 @@
                                                      :password "secret"
                                                      option value})))))
 
+(deftest describe-query-sql-releases-its-parser-threads-test
+  (testing "an unparseable statement must not leave a non-daemon thread behind"
+    (let [lingering (fn []
+                      (count (filter (fn [^Thread t]
+                                       (and (not (.isDaemon t))
+                                            (.isAlive t)
+                                            (re-find #"^pool-" (.getName t))))
+                                     (keys (Thread/getAllStackTraces)))))
+          before    (lingering)]
+      ;; DuckDB's FROM-first form, which JSqlParser 5.0 cannot parse
+      (dotimes [_ 5]
+        (is (nil? (#'client/describe-query-sql "FROM range(1) SELECT range AS n"))))
+      (Thread/sleep 300)
+      (is (= before (lingering))
+          "a JVM that cannot exit will hang CI until its timeout"))))
+
 (deftest query-request-test
   (let [request (client/query-request {:catalog "lake"
                                        :schema "reporting"

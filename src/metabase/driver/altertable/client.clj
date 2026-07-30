@@ -10,6 +10,8 @@
    (com.fasterxml.jackson.databind JsonNode)
    (java.net URI)
    (java.time Duration)
+   (java.util.concurrent Executors)
+   (java.util.function Consumer)
    (net.sf.jsqlparser.parser CCJSqlParserUtil)
    (net.sf.jsqlparser.statement.select Select)))
 
@@ -420,15 +422,30 @@
           first
           str))
 
-(defn- describe-query-sql [query-sql]
-  (try
-    (let [statements (.getStatements (CCJSqlParserUtil/parseStatements query-sql))
-          statement  (first statements)]
+(def ^:private no-parser-configuration
+  (reify Consumer
+    (accept [_ _parser])))
+
+(defn- describe-query-sql
+  "Return `DESCRIBE (...)` SQL for a single safely describable SELECT, or nil.
+
+  Runs the parse on an executor this function owns. JSqlParser 5.0 shuts its own executor
+  down only after a successful parse, so every statement it cannot parse, which includes
+  ordinary DuckDB syntax such as `FROM range(1) SELECT ...`, leaves a non-daemon thread
+  behind and stops the JVM from ever exiting."
+  [query-sql]
+  (let [executor (Executors/newSingleThreadExecutor)]
+    (try
+      (let [statements (.getStatements (CCJSqlParserUtil/parseStatements query-sql executor
+                                                                        no-parser-configuration))
+            statement  (first statements)]
       (when (and (= 1 (count statements))
                  (instance? Select statement))
         (str "DESCRIBE (" statement "\n)")))
-    (catch Exception _
-      nil)))
+      (catch Exception _
+        nil)
+      (finally
+        (.shutdownNow executor)))))
 
 (defn query-result-metadata
   "Return metadata for a safely describable native SQL query, or an empty vector."

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/altertable-ai/metabase-driver/compare/v0.2.1...v0.2.2) (2026-07-30)
+
+
+### Performance Improvements
+
+* **driver:** reuse one Lakehouse client per connection ([#8](https://github.com/altertable-ai/metabase-driver/issues/8)) ([9196eda](https://github.com/altertable-ai/metabase-driver/commit/9196eda4cf5e5627814900e96879c6fe2a6e102d))
+
 ## [0.2.1](https://github.com/altertable-ai/metabase-driver/compare/v0.2.0...v0.2.1) (2026-07-28)
 
 

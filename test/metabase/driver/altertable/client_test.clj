@@ -1,5 +1,6 @@
 (ns metabase.driver.altertable.client-test
   (:require
+   [clojure.core.memoize :as memoize]
    [clojure.test :refer :all]
    [metabase.driver.altertable.client :as client]))
 
@@ -91,6 +92,34 @@
                         #"Catalog is required"
                         (client/test-connection! {:username "alice"
                                                   :password "secret"}))))
+
+(deftest query-result-metadata-is-cached-per-connection-and-statement-test
+  (let [describes (atom 0)
+        details   {:catalog "lake" :username "alice" :password "secret"}]
+    (memoize/memo-clear! client/query-result-metadata)
+    (try
+      (with-redefs-fn {#'client/describe-native-query (fn [_details _query-sql]
+                                                        (swap! describes inc)
+                                                        [])}
+        (fn []
+          (testing "the same statement on the same connection is described once"
+            (client/query-result-metadata details "SELECT 1")
+            (client/query-result-metadata details "SELECT 1")
+            (is (= 1 @describes)))
+
+          (testing "another statement is described on its own"
+            (client/query-result-metadata details "SELECT 2")
+            (is (= 2 @describes)))
+
+          (testing "another catalog does not inherit the answer"
+            (client/query-result-metadata (assoc details :catalog "other") "SELECT 1")
+            (is (= 3 @describes)))
+
+          (testing "another identity does not inherit the answer"
+            (client/query-result-metadata (assoc details :password "rotated") "SELECT 1")
+            (is (= 4 @describes)))))
+      (finally
+        (memoize/memo-clear! client/query-result-metadata)))))
 
 (deftest normalize-details-preserves-schema-filters-test
   (is (= "inclusion"

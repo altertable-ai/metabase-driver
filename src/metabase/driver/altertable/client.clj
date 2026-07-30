@@ -1,6 +1,7 @@
 (ns metabase.driver.altertable.client
   (:require
    [clojure.core.async :as async]
+   [clojure.core.memoize :as memoize]
    [clojure.string :as str]
    [metabase.driver.altertable.results :as results])
   (:import
@@ -430,8 +431,7 @@
     (catch Exception _
       nil)))
 
-(defn query-result-metadata
-  "Return metadata for a safely describable native SQL query, or an empty vector."
+(defn- describe-native-query
   [details query-sql]
   (if-let [describe-sql (describe-query-sql query-sql)]
     (let [details (normalize-details details)]
@@ -442,6 +442,27 @@
                :base-type     (results/database-type->base-type database-type)})
             (query-all-rows! details {:query describe-sql})))
     []))
+
+(def ^:private describe-cache-ttl-ms
+  "Long enough that saving a native query and running it costs one DESCRIBE, short enough
+  that a column whose type changed is picked up without an app restart."
+  (* 5 60 1000))
+
+(def ^{:arglists '([details query-sql])} query-result-metadata
+  "Return metadata for a safely describable native SQL query, or an empty vector.
+
+  Metabase asks for this when a native query is saved and the driver needs the same answer
+  again on every execution, so answers are cached per connection, catalog, schema and SQL
+  text. Concurrent callers asking for the same SQL share one DESCRIBE."
+  (memoize/ttl
+   ^{:clojure.core.memoize/args-fn (fn [[details query-sql]]
+                                     [(select-keys (normalize-details details)
+                                                   [:base-url :username :password
+                                                    :catalog :schema])
+                                      query-sql])}
+   ;; Called through the var so the cached function stays redefinable under test.
+   (fn [details query-sql] (describe-native-query details query-sql))
+   :ttl/threshold describe-cache-ttl-ms))
 
 (defn- describe-query-result [details query-sql]
   (try

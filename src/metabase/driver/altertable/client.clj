@@ -10,6 +10,8 @@
    (com.fasterxml.jackson.databind JsonNode)
    (java.net URI)
    (java.time Duration)
+   (java.util.concurrent Executors)
+   (java.util.function Consumer)
    (net.sf.jsqlparser.parser CCJSqlParserUtil)
    (net.sf.jsqlparser.statement.select Select)))
 
@@ -464,15 +466,30 @@
           first
           str))
 
-(defn- describe-query-sql [query-sql]
-  (try
-    (let [statements (.getStatements (CCJSqlParserUtil/parseStatements query-sql))
-          statement  (first statements)]
-      (when (and (= 1 (count statements))
-                 (instance? Select statement))
-        (str "DESCRIBE (" statement "\n)")))
-    (catch Exception _
-      nil)))
+(def ^:private parser-defaults
+  "The three-argument `parseStatements` takes a configurer; the driver changes nothing."
+  (reify Consumer
+    (accept [_ _parser])))
+
+(defn- describe-query-sql
+  "Return `DESCRIBE (...)` SQL for a single safely describable SELECT, or nil.
+
+  JSqlParser releases its executor only on a successful parse, so this owns one and shuts
+  it down either way. Statements it cannot parse would otherwise leak threads that keep
+  the JVM alive."
+  [query-sql]
+  (let [executor (Executors/newSingleThreadExecutor)]
+    (try
+      (let [parsed     (CCJSqlParserUtil/parseStatements query-sql executor parser-defaults)
+            statements (.getStatements parsed)
+            statement  (first statements)]
+        (when (and (= 1 (count statements))
+                   (instance? Select statement))
+          (str "DESCRIBE (" statement "\n)")))
+      (catch Exception _
+        nil)
+      (finally
+        (.shutdownNow executor)))))
 
 (defn query-result-metadata
   "Return metadata for a safely describable native SQL query, or an empty vector."

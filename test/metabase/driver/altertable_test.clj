@@ -124,6 +124,25 @@
                                                 {:type :altertable/api-error
                                                  :operation "cancelQuery"})))))
 
+(deftest execute-reducible-query-marks-cancellations-for-metabase-test
+  (with-redefs [driver-api/database (constantly {:details {:catalog "lake"
+                                                           :username "alice"
+                                                           :password "secret"}})
+                driver-api/metadata-provider (constantly ::provider)
+                driver-api/determine-query-max-rows (constantly nil)
+                driver-api/report-timezone-id-if-supported (constantly nil)
+                driver.conn/effective-details (fn [db] (:details db))
+                client/execute-query! (fn [& _]
+                                        (throw (ex-info "canceled" {:query-canceled? true})))]
+    (let [error (try
+                  (driver/execute-reducible-query :altertable
+                                                  {:native {:query "SELECT 1"}}
+                                                  {:canceled-chan nil}
+                                                  (fn [_ _]))
+                  nil
+                  (catch clojure.lang.ExceptionInfo e e))]
+      (is (true? (:query/query-canceled? (ex-data error)))))))
+
 (deftest table-known-to-not-exist-test
   (is (true? (driver/table-known-to-not-exist? :altertable
                                                 (ex-info "Catalog Error: Table with name t does not exist!"

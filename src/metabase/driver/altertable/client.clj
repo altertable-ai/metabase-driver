@@ -176,15 +176,20 @@
   (= :altertable/api-error (:type (ex-data ex))))
 
 (defn query-canceled?
-  "True when `ex` represents a user-initiated query cancellation."
+  "True when `ex` represents a user-initiated query cancellation.
+
+  Decided from what the failure *is*, never from what its message says. Error messages
+  quote the offending table and column back at us, and schemas are full of names like
+  `canceled` and `cancellations`, so matching the text hid real errors behind a cancellation
+  that never happened."
   [^Throwable ex]
-  (or (:query-canceled? (ex-data ex))
-      (when (api-error? ex)
-        (let [{:keys [operation api-message status-code]} (ex-data ex)]
-          (or (= "cancelQuery" operation)
-              (= 499 status-code)
-              (some-> api-message str/lower-case (str/includes? "cancel")))))
-      (some-> (ex-message ex) str/lower-case (str/includes? "cancel"))))
+  (boolean
+   (or (:query-canceled? (ex-data ex))
+       (when (api-error? ex)
+         (let [{:keys [operation status-code]} (ex-data ex)]
+           (or (= "cancelQuery" operation)
+               ;; Client-closed-request, should a gateway in front of the API report it.
+               (= 499 status-code)))))))
 
 (defn- exception-messages
   "Collect messages from `ex` and its causes."

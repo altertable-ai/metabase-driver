@@ -90,7 +90,7 @@
       (catch Exception e
         (throw (ex-info (tru "Error executing query: {0}" (ex-message e))
                         (cond-> {:type qp.error-type/invalid-query}
-                          (client/query-canceled? e) (assoc :query-canceled? true))
+                          (client/query-canceled? e) (assoc :query/query-canceled? true))
                         e))))))
 
 (defmethod driver/query-result-metadata :altertable

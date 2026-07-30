@@ -108,6 +108,31 @@
                                     :schema-filters-type "inclusion"
                                     :schema-filters-patterns "main,analytics"})))))
 
+(defn- api-error [ex-data-map]
+  (ex-info "Altertable query failed." (merge {:type      :altertable/api-error
+                                             :operation "query"}
+                                            ex-data-map)))
+
+(deftest query-canceled?-test
+  (testing "a cancellation is recognised from the failure itself"
+    (is (true? (client/query-canceled? (ex-info "wrapped" {:query-canceled? true}))))
+    (is (true? (client/query-canceled? (api-error {:operation "cancelQuery"}))))
+    (is (true? (client/query-canceled? (api-error {:status-code 499})))))
+
+  (testing "a query failure that merely names a cancel-ish table or column is an error"
+    (doseq [message ["Binder Error: Table \"cancellations\" does not have a column \"amout\""
+                     "Referenced column \"cancel_reason\" not found"
+                     "Referenced column \"canceled\" not found"
+                     "Binder Error: Table \"cancel\" does not exist"
+                     "no such column: cancelled_at"]]
+      (testing message
+        (is (false? (client/query-canceled? (api-error {:api-message message}))))
+        (is (false? (client/query-canceled?
+                     (ex-info (str "Error executing query: " message) {})))))))
+
+  (testing "an ordinary query failure is an error"
+    (is (false? (client/query-canceled? (api-error {:status-code 400}))))))
+
 (deftest list-tables-sql-ignores-default-schema-test
   (testing "default query schema must not restrict table discovery SQL"
     (let [sql (#'client/list-tables-sql {:catalog "memory" :schema "main"})]

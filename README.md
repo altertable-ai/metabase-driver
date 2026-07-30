@@ -108,6 +108,15 @@ address. The unit tests do not require a running service.
 Pull requests targeting `main` run the same suite in GitHub Actions with an
 Altertable mock service.
 
+### Measure per-query cost
+
+With the mock running, this reports the round trips, TCP connections and threads
+the driver spends per query and per metadata sync:
+
+```sh
+clojure -M:test -m metabase.driver.altertable.connection-perf
+```
+
 ### Build the plugin
 
 The plugin is built with the driver tooling from the pinned Metabase version.

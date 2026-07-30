@@ -18,7 +18,11 @@
 (def ^:private default-base-url "https://api.altertable.ai")
 (def ^:private default-connect-timeout-seconds 5)
 (def ^:private default-request-timeout-seconds 60)
-(def ^:private compute-sizes #{:AUTO :XS :S :M :L :XL})
+(def ^:private compute-sizes
+  "Sizes the SDK accepts, read from its enum in declaration order so the driver cannot drift
+  from it and the error message cannot name a size the API rejects."
+  (mapv (fn [^LakehouseClient$ComputeSize size] (keyword (.name size)))
+        (LakehouseClient$ComputeSize/values)))
 
 (defn- non-blank [value]
   (when (some? value)
@@ -57,8 +61,11 @@
                (keyword? value) (name value)
                :else (or (non-blank value) "AUTO"))
         size (-> raw str/upper-case keyword)]
-    (when-not (compute-sizes size)
-      (invalid! "Compute size must be one of AUTO, XS, S, M, L, or XL." :compute-size))
+    (when-not (some #{size} compute-sizes)
+      (invalid! (str "Compute size must be one of "
+                     (str/join ", " (map clojure.core/name compute-sizes))
+                     ".")
+                :compute-size))
     size))
 
 (defn- schema-filter-settings

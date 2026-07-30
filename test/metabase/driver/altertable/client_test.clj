@@ -1,7 +1,9 @@
 (ns metabase.driver.altertable.client-test
   (:require
    [clojure.test :refer :all]
-   [metabase.driver.altertable.client :as client]))
+   [metabase.driver.altertable.client :as client])
+  (:import
+   (ai.altertable.lakehouse LakehouseClient$ComputeSize)))
 
 (deftest normalize-details-test
   (testing "normalizes defaults and credentials"
@@ -61,6 +63,15 @@
                                                      :username "alice"
                                                      :password "secret"
                                                      option value})))))
+
+(deftest every-sdk-compute-size-is-accepted-test
+  (testing "the driver accepts exactly the sizes the SDK offers, so the two cannot drift"
+    (doseq [^LakehouseClient$ComputeSize size (LakehouseClient$ComputeSize/values)]
+      (is (= (keyword (.name size))
+             (:compute-size (client/normalize-details {:catalog  "lake"
+                                                       :username "alice"
+                                                       :password "secret"
+                                                       :compute-size (.name size)})))))))
 
 (deftest query-request-test
   (let [request (client/query-request {:catalog "lake"

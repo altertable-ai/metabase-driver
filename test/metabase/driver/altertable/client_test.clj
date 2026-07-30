@@ -86,6 +86,36 @@
     (is (= "metabase" (.requestedBy request)))
     (is (= "duckdb" (.dialect request)))))
 
+(deftest query-request-compute-size-test
+  (let [details {:catalog "lake" :username "alice" :password "secret" :compute-size "M"}]
+    (testing "a query uses the size configured on the connection"
+      (is (= "M" (some-> (client/query-request details {:query "SELECT 1"})
+                         .computeSize .name))))
+
+    (testing "the driver can size a statement whose cost it already knows"
+      (is (= "XS" (some-> (client/query-request details {:query        "SELECT 1"
+                                                        :compute-size :XS})
+                          .computeSize .name))))))
+
+(deftest metadata-statements-carry-the-driver-size-test
+  (testing "the driver sizes its own statements rather than inheriting the query size"
+    (let [details  {:catalog "lake" :username "alice" :password "secret" :compute-size "L"}
+          captured (atom nil)]
+      (with-redefs-fn {#'client/query-request (fn [_details request]
+                                               (reset! captured request)
+                                               (throw (ex-info "captured before any I/O" {})))}
+        (fn []
+          (doseq [[what call] [["schemas"  #(client/list-schemas! details)]
+                               ["tables"   #(client/list-tables! details)]
+                               ["fields"   #(client/describe-fields! details)]
+                               ["timezone" #(client/default-timezone details)]]]
+            (testing what
+              (reset! captured nil)
+              (is (thrown? clojure.lang.ExceptionInfo (call)))
+              (is (= :XS (:compute-size @captured)))
+              (is (true? (:ephemeral @captured))
+                  "must stay ephemeral, or each statement leaves a session nothing reuses"))))))))
+
 (deftest test-connection-validates-details-test
   (is (thrown-with-msg? clojure.lang.ExceptionInfo
                         #"Catalog is required"

@@ -129,8 +129,13 @@
   (LakehouseClient$ComputeSize/valueOf (name (:compute-size (normalize-details details)))))
 
 (defn query-request
+  "Build a `QueryRequest` from `details` and a native query map.
+
+  `:compute-size` pins the size for this one statement instead of inheriting the size
+  configured on the connection."
   ^LakehouseClient$QueryRequest [details {:keys [query session-id max-rows offset timezone
-                                                ephemeral visible requested-by query-id cache]
+                                                ephemeral visible requested-by query-id cache
+                                                compute-size]
                                          :or {visible false, requested-by "metabase"}}]
   (let [{:keys [catalog schema] :as normalized} (normalize-details details)]
     (when-not (non-blank query)
@@ -140,7 +145,8 @@
      catalog
      schema
      session-id
-     (compute-size-enum normalized)
+     (compute-size-enum (cond-> normalized
+                          compute-size (assoc :compute-size compute-size)))
      true
      (some-> max-rows long)
      (some-> offset long)
@@ -255,13 +261,23 @@
 (defn- sql-string-literal [value]
   (str "'" (str/replace value "'" "''") "'"))
 
+(def ^:private metadata-request
+  "How the driver asks for its own statements: catalog lookups, DESCRIBE and connection checks.
+
+  `AUTO` resolves these to `XS` anyway, but only after a worker has EXPLAINed them, so naming
+  the size skips that round trip. `AUTO` also ran them on an ephemeral session; an explicit
+  size alone takes the persistent path and registers a session per statement that nothing ever
+  reuses, so the lifecycle has to be asked for too."
+  {:compute-size :XS
+   :ephemeral    true})
+
 (defn- query-all-rows!
+  "Run one of the driver's own metadata statements and return every row."
   [details native-query]
   (let [^LakehouseClient client (details->client details)]
     (try
       (let [^LakehouseClient$QueryAllResult result
-            (.queryAll client (query-request details native-query))
-            columns (vec (.columns result))]
+            (.queryAll client (query-request details (merge metadata-request native-query)))]
         (mapv (fn [^java.util.List row]
                 (mapv (fn [^JsonNode node]
                         (results/json-node->value node))
@@ -455,7 +471,8 @@
   (let [^LakehouseClient client (details->client details)]
     (try
       (with-open [^LakehouseClient$QueryResult _result
-                  (.query client (query-request details {:query "SELECT 1 AS ok"}))]
+                  (.query client (query-request details
+                                             (assoc metadata-request :query "SELECT 1 AS ok")))]
         true)
       (catch LakehouseClient$LakehouseException error
         (throw (sdk-exception error))))))

@@ -10,6 +10,8 @@
    (com.fasterxml.jackson.databind JsonNode)
    (java.net URI)
    (java.time Duration)
+   (java.util.concurrent Executors)
+   (java.util.function Consumer)
    (net.sf.jsqlparser.parser CCJSqlParserUtil)
    (net.sf.jsqlparser.statement.select Select)))
 
@@ -111,18 +113,62 @@
         (normalize-details trimmed)
         (catch Exception _ trimmed)))))
 
-(defn details->client
-  ^LakehouseClient [details]
-  (let [{:keys [base-url username password
-                connect-timeout-seconds request-timeout-seconds]}
-        (normalize-details details)
-        config (doto (LakehouseClient$Config.)
+(defn- build-client
+  ^LakehouseClient [{:keys [base-url username password
+                            connect-timeout-seconds request-timeout-seconds]}]
+  (let [config (doto (LakehouseClient$Config.)
                  (.baseUrl base-url)
                  (.connectTimeout (Duration/ofSeconds connect-timeout-seconds))
                  (.requestTimeout (Duration/ofSeconds request-timeout-seconds))
                  (.userAgentSuffix "metabase-altertable-driver/0.1.0"))]
     (.credentials config username password)
     (LakehouseClient. config)))
+
+(def ^:private connection-key-fields
+  "What decides which host a client talks to and as whom. Catalog and schema are sent per
+  request, so one client serves every catalog on the same host and credentials."
+  [:base-url :username :password :connect-timeout-seconds :request-timeout-seconds])
+
+(defonce ^:private connections (atom {}))
+
+(defn- cached-client
+  ^LakehouseClient [cache-key normalized]
+  ;; Held as a delay so a retried `swap!` cannot build a client that is thrown away.
+  (let [pending (or (get @connections cache-key)
+                    (-> (swap! connections
+                               (fn [cached]
+                                 (cond-> cached
+                                   (not (contains? cached cache-key))
+                                   (assoc cache-key (delay (build-client normalized))))))
+                        (get cache-key)))]
+    (try
+      @pending
+      (catch Throwable failure
+        ;; A delay remembers a failure for good, so drop it: a transient build failure must
+        ;; not leave the connection permanently unusable.
+        (swap! connections (fn [cached]
+                             (cond-> cached
+                               (identical? pending (get cached cache-key))
+                               (dissoc cache-key))))
+        (throw failure)))))
+
+(defn details->client
+  "Return the `LakehouseClient` for `details`, building it on first use.
+
+  Connection pools are never shared between clients, so holding on to one client is what
+  keeps a TCP and TLS connection alive from one query to the next."
+  ^LakehouseClient [details]
+  (let [normalized (normalize-details details)]
+    (cached-client (select-keys normalized connection-key-fields) normalized)))
+
+(defn forget-clients!
+  "Drop every cached client so the next call reads current connection details.
+
+  Does not close the underlying `HttpClient`. A caller that already took one keeps using it
+  until its query finishes, and closing mid-flight fails that query with `closed`. Dropping
+  the reference is enough: the JDK reclaims each client once nobody holds it."
+  []
+  (reset! connections {}))
 
 (defn compute-size-enum
   ^LakehouseClient$ComputeSize [details]
@@ -420,15 +466,30 @@
           first
           str))
 
-(defn- describe-query-sql [query-sql]
-  (try
-    (let [statements (.getStatements (CCJSqlParserUtil/parseStatements query-sql))
-          statement  (first statements)]
-      (when (and (= 1 (count statements))
-                 (instance? Select statement))
-        (str "DESCRIBE (" statement "\n)")))
-    (catch Exception _
-      nil)))
+(def ^:private parser-defaults
+  "The three-argument `parseStatements` takes a configurer; the driver changes nothing."
+  (reify Consumer
+    (accept [_ _parser])))
+
+(defn- describe-query-sql
+  "Return `DESCRIBE (...)` SQL for a single safely describable SELECT, or nil.
+
+  JSqlParser releases its executor only on a successful parse, so this owns one and shuts
+  it down either way. Statements it cannot parse would otherwise leak threads that keep
+  the JVM alive."
+  [query-sql]
+  (let [executor (Executors/newSingleThreadExecutor)]
+    (try
+      (let [parsed     (CCJSqlParserUtil/parseStatements query-sql executor parser-defaults)
+            statements (.getStatements parsed)
+            statement  (first statements)]
+        (when (and (= 1 (count statements))
+                   (instance? Select statement))
+          (str "DESCRIBE (" statement "\n)")))
+      (catch Exception _
+        nil)
+      (finally
+        (.shutdownNow executor)))))
 
 (defn query-result-metadata
   "Return metadata for a safely describable native SQL query, or an empty vector."
@@ -450,9 +511,11 @@
       nil)))
 
 (defn test-connection!
-  "Verify credentials and catalog access by running a lightweight query."
+  "Verify credentials and catalog access by running a lightweight query.
+
+  Builds its own client rather than using the cache: these details may never be saved."
   [details]
-  (let [^LakehouseClient client (details->client details)]
+  (let [^LakehouseClient client (build-client (normalize-details details))]
     (try
       (with-open [^LakehouseClient$QueryResult _result
                   (.query client (query-request details {:query "SELECT 1 AS ok"}))]

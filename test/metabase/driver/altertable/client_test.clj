@@ -62,6 +62,26 @@
                                                      :password "secret"
                                                      option value})))))
 
+(deftest describe-query-sql-releases-its-parser-threads-test
+  (testing "an unparseable statement must not leave a non-daemon thread behind"
+    (let [lingering (fn []
+                      (count (filter (fn [^Thread t]
+                                       (and (not (.isDaemon t))
+                                            (.isAlive t)
+                                            (re-find #"^pool-" (.getName t))))
+                                     (keys (Thread/getAllStackTraces)))))
+          before    (lingering)]
+      ;; DuckDB's FROM-first form, which JSqlParser 5.0 cannot parse
+      (dotimes [_ 5]
+        (is (nil? (#'client/describe-query-sql "FROM range(1) SELECT range AS n"))))
+      ;; Poll rather than sleep a fixed time: a terminating thread can outlive any constant
+      ;; we pick on a loaded machine, and that turns a real assertion into a flake.
+      (let [deadline (+ (System/currentTimeMillis) 5000)]
+        (while (and (> (lingering) before) (< (System/currentTimeMillis) deadline))
+          (Thread/sleep 50)))
+      (is (= before (lingering))
+          "a JVM that cannot exit will hang CI until its timeout"))))
+
 (deftest query-request-test
   (let [request (client/query-request {:catalog "lake"
                                        :schema "reporting"
@@ -114,3 +134,66 @@
       (is (re-find #"table_catalog = 'memory'" sql))
       (is (not (re-find #"table_schema = 'main'" sql)))
       (is (re-find #"BASE TABLE',\s*'VIEW'" sql)))))
+
+(def ^:private connection-details
+  {:catalog "lake" :username "alice" :password "secret"})
+
+(defn- cached-clients []
+  (vals @@#'client/connections))
+
+(deftest details->client-is-reused-per-connection-test
+  (client/forget-clients!)
+  (let [lakehouse-client (client/details->client connection-details)]
+    (testing "the same connection reuses one client, so its connection pool is reused"
+      (is (identical? lakehouse-client (client/details->client connection-details))))
+
+    (testing "catalog and schema travel per request, so they do not build another client"
+      (is (identical? lakehouse-client
+                      (client/details->client (assoc connection-details
+                                                     :catalog "other"
+                                                     :schema "reporting")))))
+
+    (testing "a different identity gets its own client"
+      (is (not (identical? lakehouse-client
+                           (client/details->client (assoc connection-details
+                                                          :password "rotated"))))))
+
+    (testing "invalidation rebuilds"
+      (client/forget-clients!)
+      (is (not (identical? lakehouse-client (client/details->client connection-details)))))))
+
+(deftest details->client-retries-after-a-failed-build-test
+  (client/forget-clients!)
+  (let [attempts (atom 0)]
+    (try
+      (with-redefs-fn {#'client/build-client
+                       (fn [_normalized]
+                         (when (= 1 (swap! attempts inc))
+                           (throw (ex-info "too many open files" {})))
+                         ::rebuilt)}
+        (fn []
+          (testing "a build failure is reported"
+            (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                                  #"too many open files"
+                                  (client/details->client connection-details))))
+
+          (testing "and is not remembered as the answer, so the next call rebuilds"
+            (is (= ::rebuilt (client/details->client connection-details)))
+            (is (= 2 @attempts)))))
+      (finally
+        (client/forget-clients!)))))
+
+(deftest test-connection-does-not-retain-a-client-test
+  (client/forget-clients!)
+  (testing "connection checks run on details that may never be saved, so nothing is cached"
+    (is (thrown? Exception (client/test-connection! (assoc connection-details
+                                                          :base-url "http://127.0.0.1:1"))))
+    (is (empty? (cached-clients)))))
+
+(deftest forget-clients-drops-every-client-test
+  (client/forget-clients!)
+  (client/details->client connection-details)
+  (is (= 1 (count (cached-clients))))
+  (testing "invalidation empties the cache without touching the clients it handed out"
+    (client/forget-clients!)
+    (is (empty? (cached-clients)))))

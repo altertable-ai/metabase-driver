@@ -120,6 +120,12 @@
   [_ messages]
   (client/humanize-connection-error messages))
 
+(defmethod driver/notify-database-updated :altertable
+  [_driver _database]
+  ;; Drops every cached client, not only this database's: rebuilding one is cheap enough
+  ;; that the cache is keyed by connection rather than by database.
+  (client/forget-clients!))
+
 (defmethod driver/normalize-db-details :altertable
   [_ database]
   (update database :details client/sanitize-details))

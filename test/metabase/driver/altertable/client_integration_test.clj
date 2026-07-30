@@ -15,6 +15,12 @@
     :password password
     :request-timeout-seconds 10}))
 
+(defn- rows-of
+  "Run `sql` on an explicitly supplied client, as a caller mid-query would."
+  [details client sql]
+  (with-open [result (.query client (client/query-request details {:query sql}))]
+    (mapv (fn [row] (mapv (fn [node] (.asInt node)) row)) (iterator-seq (.iterator result)))))
+
 (deftest ^:integration test-connection-test
   (is (true? (client/test-connection! (mock-details)))))
 
@@ -125,3 +131,12 @@
          (is (vector? (deref canceled 2000 nil)))
          (into [] rows))))
     (is (every? seq @canceled))))
+
+(deftest ^:integration invalidation-does-not-break-a-borrowed-client-test
+  (testing "a borrowed client survives invalidation"
+    (let [details  (mock-details)
+          borrowed (client/details->client details)]
+      (client/forget-clients!)
+      (is (= [[1]] (rows-of details borrowed "SELECT 1")))
+      (testing "and the cache really was cleared"
+        (is (not (identical? borrowed (client/details->client details))))))))

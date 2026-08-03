@@ -99,7 +99,8 @@
     (is (= "reporting" (.schema request)))
     (is (= "metabase-session" (.sessionId request)))
     (is (= "M" (some-> request .computeSize .name)))
-    (is (true? (.sanitize request)))
+    (testing "the driver must not request legacy pagination, which would replace the limit below with a 500-row window"
+      (is (false? (.sanitize request))))
     (is (= 25 (.limit request)))
     (is (= "Europe/Paris" (.timezone request)))
     (is (false? (.visible request)))

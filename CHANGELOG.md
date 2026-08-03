@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/altertable-ai/metabase-driver/compare/v0.2.2...v0.2.3) (2026-08-03)
+
+
+### Bug Fixes
+
+* **driver:** return complete query results ([#10](https://github.com/altertable-ai/metabase-driver/issues/10)) ([9a7ee1b](https://github.com/altertable-ai/metabase-driver/commit/9a7ee1b030b9849e6d647b2388164621db251f8e))
+
 ## [0.2.2](https://github.com/altertable-ai/metabase-driver/compare/v0.2.1...v0.2.2) (2026-07-30)
 
 

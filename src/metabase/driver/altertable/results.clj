@@ -102,12 +102,17 @@
          column-names)})
 
 (defn column-metadata
-  "Return execution metadata from described columns, falling back to row inference."
+  "Return execution metadata from described columns, falling back to row inference.
+
+  Names come from the executed statement, which is what the result rows are actually
+  labelled with. A blank name falls back to the described one: Metabase binds
+  visualization settings by column name, so an unnamed column silently drops the series
+  colors, axis labels and formatting configured against it."
   [column-names rows described-columns]
   (if (= (count column-names) (count described-columns))
     {:cols
-     (mapv (fn [column-name {:keys [database-type base-type]}]
-             {:name           column-name
+     (mapv (fn [column-name {described-name :name :keys [database-type base-type]}]
+             {:name           (or (not-empty column-name) described-name)
               :database_type  database-type
               :base_type      base-type
               :effective_type base-type})

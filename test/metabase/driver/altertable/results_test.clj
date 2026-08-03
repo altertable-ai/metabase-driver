@@ -89,6 +89,17 @@
                                    {:name "described_measurement"
                                     :database-type "DOUBLE"
                                     :base-type :type/Float}])))
+  (testing "a blank live name falls back to the described one rather than reaching Metabase unnamed"
+    (is (= ["described_first" "live_second"]
+           (mapv :name
+                 (:cols (results/column-metadata ["" "live_second"]
+                                                 [["a" "b"]]
+                                                 [{:name "described_first"
+                                                   :database-type "VARCHAR"
+                                                   :base-type :type/Text}
+                                                  {:name "described_second"
+                                                   :database-type "VARCHAR"
+                                                   :base-type :type/Text}]))))))
   (is (= (results/infer-column-metadata ["id"] [[1]])
          (results/column-metadata ["id"] [[1]] nil))))
 

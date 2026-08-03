@@ -174,6 +174,15 @@
   ^LakehouseClient$ComputeSize [details]
   (LakehouseClient$ComputeSize/valueOf (name (:compute-size (normalize-details details)))))
 
+(def ^:private legacy-pagination
+  "The `sanitize` flag, which asks `POST /query` for its legacy pagination.
+
+  A request that sets it has its `limit` and `offset` discarded server-side and replaced by
+  a fixed 500-row window, with no error and nothing in the response to say rows were
+  dropped. Metabase already decides how many rows a query may return, so the driver sends
+  that limit and leaves this off."
+  false)
+
 (defn query-request
   ^LakehouseClient$QueryRequest [details {:keys [query session-id max-rows offset timezone
                                                 ephemeral visible requested-by query-id cache]
@@ -187,7 +196,7 @@
      schema
      session-id
      (compute-size-enum normalized)
-     true
+     legacy-pagination
      (some-> max-rows long)
      (some-> offset long)
      timezone

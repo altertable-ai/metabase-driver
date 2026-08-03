@@ -5,8 +5,9 @@
   Parts of that contract decide whether a question is answered correctly and are not
   implemented by altertable-mock, so no other test here can see them. The legacy
   `sanitize` flag is one: it makes the server throw away the requested pagination in
-  favour of a fixed 500-row window, and it does so silently, which is what makes it worth
-  a test."
+  favour of a fixed 500-row window. The schema line is the other: it names columns with
+  `{name, type}` objects, where the mock sends bare strings. Both failures are silent,
+  which is what makes them worth a test."
   (:require
    [clojure.string :as str]
    [clojure.test :refer :all]
@@ -147,3 +148,21 @@
           (is (= 1200 (count rows)))
           (is (some #{1200} (map :rows-limit @requests))
               "a limit above 500 must survive the request unchanged"))))))
+
+(deftest column-names-reach-metabase-test
+  (testing "visualization settings bind by column name, so names must not arrive blank"
+    (with-fake-lakehouse
+      {:columns [["booking_date" "DATE"]
+                 ["GBV" "DECIMAL(18,2)"]
+                 ["nb_bookings" "BIGINT"]]
+       :rows    [["2026-01-05" 1250.75 12]]}
+      (fn [details _requests]
+        (let [[metadata _rows] (run-query!
+                                details
+                                {:query (str "SELECT booking_date, GBV, nb_bookings "
+                                             "FROM bookings")})]
+          (is (= ["booking_date" "GBV" "nb_bookings"]
+                 (mapv :name (:cols metadata)))
+              "blank names get uniquified into \"\", \"_2\", \"_3\" and stop matching settings")
+          (is (= [:type/Date :type/Decimal :type/Integer]
+                 (mapv :base_type (:cols metadata)))))))))

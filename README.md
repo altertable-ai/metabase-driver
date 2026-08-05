@@ -132,7 +132,10 @@ release pull request updates `CHANGELOG.md` and the plugin version in
 
 Merging the release pull request creates a `vX.Y.Z` GitHub release, builds the
 driver against Metabase `v0.61.2`, and attaches both
-`altertable.metabase-driver.jar` and its SHA-256 checksum. The release workflow
+`altertable.metabase-driver-X.Y.Z.jar` and its SHA-256 checksum. Metabase
+identifies a plugin from the `metabase-plugin.yaml` inside the archive rather
+than from its filename, so the released name carries the version for the
+operator without changing how Metabase loads it. The release workflow
 also accepts an existing tag through manual dispatch so a failed artifact
 build or upload can be retried safely.
 

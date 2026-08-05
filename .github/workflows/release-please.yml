@@ -109,15 +109,17 @@ jobs:
             grep --extended-regexp "^  version: [\"']?${version}[\"']?$"
           (
             cd target
-            sha256sum altertable.metabase-driver.jar \
-              >altertable.metabase-driver.jar.sha256
+            mv altertable.metabase-driver.jar "altertable.metabase-driver-${version}.jar"
+            sha256sum "altertable.metabase-driver-${version}.jar" \
+              >"altertable.metabase-driver-${version}.jar.sha256"
           )
 
       - name: Upload release artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          version="${RELEASE_TAG#v}"
           gh release upload "$RELEASE_TAG" \
-            target/altertable.metabase-driver.jar \
-            target/altertable.metabase-driver.jar.sha256 \
+            "target/altertable.metabase-driver-${version}.jar" \
+            "target/altertable.metabase-driver-${version}.jar.sha256" \
             --clobber

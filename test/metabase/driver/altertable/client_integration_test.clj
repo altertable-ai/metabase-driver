@@ -68,11 +68,13 @@
                :effective_type :type/Float}]
              (:cols metadata))))))
 
-(deftest ^:integration execute-query-falls-back-to-row-inference-for-unparsed-duckdb-sql-test
+(deftest ^:integration execute-query-types-unparsed-duckdb-sql-from-the-response-test
   (let [details  (mock-details)
         query-sql "FROM range(1) SELECT range AS n"
         response (promise)]
-    (is (= [] (client/query-result-metadata details query-sql)))
+    (testing "DESCRIBE cannot parse DuckDB's FROM-first syntax, so a question that is only
+    ever described stays untyped"
+      (is (= [] (client/query-result-metadata details query-sql))))
     (client/execute-query!
      details
      {:query query-sql}
@@ -80,10 +82,12 @@
      (fn [metadata rows]
        (deliver response [metadata (into [] rows)])))
     (let [[metadata rows] @response]
-      (is (= [{:name           "n"
-               :base_type      :type/Integer
-               :effective_type :type/Integer}]
-             (:cols metadata)))
+      (testing "executing it types it anyway, from the schema line the response carries"
+        (is (= [{:name           "n"
+                 :database_type  "BIGINT"
+                 :base_type      :type/Integer
+                 :effective_type :type/Integer}]
+               (:cols metadata))))
       (is (= [[0]] rows)))))
 
 (deftest ^:integration authentication-errors-are-sanitized-test

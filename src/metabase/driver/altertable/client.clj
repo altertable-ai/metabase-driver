@@ -6,7 +6,8 @@
   (:import
    (ai.altertable.lakehouse LakehouseClient LakehouseClient$ComputeSize LakehouseClient$Config
                             LakehouseClient$LakehouseException LakehouseClient$QueryAllResult
-                            LakehouseClient$QueryRequest LakehouseClient$QueryResult)
+                            LakehouseClient$QueryColumn LakehouseClient$QueryRequest
+                            LakehouseClient$QueryResult)
    (com.fasterxml.jackson.databind JsonNode)
    (java.net URI)
    (java.time Duration)
@@ -513,12 +514,6 @@
             (query-all-rows! details {:query describe-sql})))
     []))
 
-(defn- describe-query-result [details query-sql]
-  (try
-    (query-result-metadata details query-sql)
-    (catch clojure.lang.ExceptionInfo _
-      nil)))
-
 (defn test-connection!
   "Verify credentials and catalog access by running a lightweight query.
 
@@ -532,6 +527,21 @@
       (catch LakehouseClient$LakehouseException error
         (throw (sdk-exception error))))))
 
+(defn- response-columns
+  "Describe the executed statement from the schema line its own response carries.
+
+  Returns nil when the server names columns without typing them, which leaves the count
+  mismatched and sends `column-metadata` down its row-inference branch, exactly as an
+  unparsable `DESCRIBE` did."
+  [schema]
+  (when (every? (fn [^LakehouseClient$QueryColumn column] (some? (.type column))) schema)
+    (mapv (fn [^LakehouseClient$QueryColumn column]
+            (let [database-type (.type column)]
+              {:name          (.name column)
+               :database-type database-type
+               :base-type     (results/database-type->base-type database-type)}))
+          schema)))
+
 (defn execute-query!
   "Execute a native query and pass Metabase column metadata plus a single-use
   row reducible to `respond`."
@@ -539,9 +549,9 @@
   (let [lakehouse-client (details->client details)
         done-chan        (async/chan 1)]
     (try
-      (let [described-columns (describe-query-result details (:query native-query))
-            ^LakehouseClient$QueryResult query-result
+      (let [^LakehouseClient$QueryResult query-result
             (.query lakehouse-client (query-request details native-query))
+            described-columns (response-columns (.schema query-result))
             metadata  (.metadata query-result)
             iterator  (converting-iterator (.iterator query-result))
             columns   (vec (.columns query-result))

@@ -99,6 +99,7 @@
                     :password "secret"
                     :base-url "https://api.altertable.ai"
                     :compute-size :AUTO
+                    :session-pool-size 0
                     :connect-timeout-seconds 5
                     :request-timeout-seconds 60}}
          (driver/normalize-db-details :altertable
@@ -261,3 +262,20 @@
                                                           :password "secret"
                                                           :schema-filters-type "inclusion"
                                                           :schema-filters-patterns "main"}}))))))
+
+(deftest execute-reducible-query-only-pools-pure-mbql-test
+  (doseq [[query reusable?]
+          [[{:type :native} false]
+           [{:type :query :query {:source-query {:native "SELECT 1"}}} false]
+           [{:type :query} false]
+           [{:type :query :qp/compiled-inline {:query "SELECT 1"}} true]]]
+    (with-redefs [driver-api/database (constantly {:id 12 :details {:catalog "lake" :username "alice" :password "secret"}})
+                  driver-api/metadata-provider (constantly ::provider)
+                  driver-api/determine-query-max-rows (constantly 100)
+                  driver-api/report-timezone-id-if-supported (constantly "UTC")
+                  driver.conn/effective-details :details
+                  client/execute-query! (fn [details native-query _ _]
+                                          (is (= 12 (:database-id details)))
+                                          (is (= reusable? (:session-reuse? native-query))))]
+      (driver/execute-reducible-query :altertable (assoc query :native {:query "SELECT 1"})
+                                      {:canceled-chan nil} (fn [_ _])))))

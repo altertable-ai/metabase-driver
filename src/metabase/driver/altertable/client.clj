@@ -55,6 +55,15 @@
       (invalid! (str (name field) " must be a positive integer.") field))
     parsed))
 
+(defn- session-pool-size [value]
+  (let [value (if (string? value) (str/trim value) value)
+        size  (if (contains? #{nil 0 "0"} value)
+                0
+                (positive-integer value 0 :session-pool-size))]
+    (when (> size 32)
+      (invalid! "Session pool size must be between 0 and 32." :session-pool-size))
+    size))
+
 (defn- compute-size [value]
   (let [raw  (cond
                (keyword? value) (name value)
@@ -94,6 +103,7 @@
       :username                username
       :password                password
       :compute-size            (compute-size (:compute-size details))
+      :session-pool-size       (session-pool-size (:session-pool-size details))
       :connect-timeout-seconds (positive-integer (:connect-timeout-seconds details)
                                                  default-connect-timeout-seconds
                                                  :connect-timeout-seconds)
@@ -131,6 +141,26 @@
   [:base-url :username :password :connect-timeout-seconds :request-timeout-seconds])
 
 (defonce ^:private connections (atom {}))
+(defonce ^:private session-pools (atom {}))
+
+(defn- query-session-pool [details native-query]
+  (let [normalized (normalize-details details)
+        size       (:session-pool-size normalized)]
+    (when (and (pos? size)
+               (true? (:session-reuse? native-query))
+               (not= :AUTO (:compute-size normalized))
+               (nil? (:session-id native-query))
+               (not (true? (:ephemeral native-query))))
+      (let [pool-key (assoc (select-keys normalized (concat connection-key-fields
+                                                          [:catalog :schema :compute-size :session-pool-size]))
+                            :database-id (:database-id details)
+                            :timezone (:timezone native-query))]
+        (locking session-pools
+          (or (get @session-pools pool-key)
+              (let [pool (async/chan size)]
+                (dotimes [_ size] (async/offer! pool {}))
+                (swap! session-pools assoc pool-key pool)
+                pool)))))))
 
 (defn- cached-client
   ^LakehouseClient [cache-key normalized]
@@ -169,7 +199,12 @@
   until its query finishes, and closing mid-flight fails that query with `closed`. Dropping
   the reference is enough: the JDK reclaims each client once nobody holds it."
   []
-  (reset! connections {}))
+  (reset! connections {})
+  (locking session-pools
+    (doseq [pool (vals @session-pools)]
+      (async/close! pool)
+      (loop [] (when (async/poll! pool) (recur))))
+    (reset! session-pools {})))
 
 (defn compute-size-enum
   ^LakehouseClient$ComputeSize [details]
@@ -543,31 +578,54 @@
           schema)))
 
 (defn execute-query!
-  "Execute a native query and pass Metabase column metadata plus a single-use
-  row reducible to `respond`."
+  "Execute a query while retaining exclusive session ownership through reduction and cancellation."
   [details native-query cancel-chan respond]
   (let [lakehouse-client (details->client details)
-        done-chan        (async/chan 1)]
+        available-pool   (query-session-pool details native-query)
+        slot             (when available-pool (async/poll! available-pool))
+        pool             (when slot available-pool)
+        reusable-session (atom nil)
+        request          (cond-> native-query
+                           pool (assoc :session-id (:session-id slot) :ephemeral false))]
     (try
       (with-open [^LakehouseClient$QueryResult query-result
-                  (.query lakehouse-client (query-request details native-query))]
-        (let [described-columns (response-columns (.schema query-result))
-              metadata  (.metadata query-result)
-              iterator  (converting-iterator (.iterator query-result))
-              columns   (vec (.columns query-result))
-              prefix    (if (= (count columns) (count described-columns))
-                          []
-                          (take-prefix! iterator 32))
-              row-source (results/rows-reducible prefix iterator query-result)]
-          (when cancel-chan
-            (async/thread
-              (let [[signal port] (async/alts!! [cancel-chan done-chan])]
-                (when (and (= port cancel-chan) signal)
-                  (try
-                    (cancel-query! lakehouse-client metadata)
-                    (catch Exception _))))))
-          (respond (results/column-metadata columns prefix described-columns) row-source)))
+                  (.query lakehouse-client (query-request details request))]
+        (let [metadata   (.metadata query-result)
+              done-chan  (async/chan)
+              canceled?  (atom false)
+              cancel-task (when cancel-chan
+                            (async/thread
+                              (let [[signal port] (async/alts!! [cancel-chan done-chan] :priority true)]
+                                (when (and (= port cancel-chan) signal)
+                                  (reset! canceled? true)
+                                  (try (cancel-query! lakehouse-client metadata)
+                                       (catch Exception _))))))]
+          (try
+            (let [described-columns (response-columns (.schema query-result))
+                  iterator          (converting-iterator (.iterator query-result))
+                  columns           (vec (.columns query-result))
+                  prefix            (if (= (count columns) (count described-columns))
+                                      []
+                                      (take-prefix! iterator 32))
+                  row-source        (results/rows-reducible prefix iterator query-result)
+                  response          (respond (results/column-metadata columns prefix described-columns) row-source)]
+              (when (and pool (not (.hasNext iterator)))
+                (reset! reusable-session (non-blank (.asText ^JsonNode (.path metadata "session_id") nil))))
+              response)
+            (finally
+              (async/close! done-chan)
+              ;; A cancel request must finish before another query can borrow this session.
+              (when (and pool cancel-task) (async/<!! cancel-task))
+              (when @canceled? (reset! reusable-session nil))
+              (when (and pool (nil? @reusable-session) (not @canceled?))
+                (try (cancel-query! lakehouse-client metadata)
+                     (catch Exception _)))))))
       (catch LakehouseClient$LakehouseException error
+        (reset! reusable-session nil)
         (throw (sdk-exception error)))
+      (catch Throwable failure
+        (reset! reusable-session nil)
+        (throw failure))
       (finally
-        (async/close! done-chan)))))
+        (when pool
+          (async/offer! pool (if-let [session-id @reusable-session] {:session-id session-id} {})))))))

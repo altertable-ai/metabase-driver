@@ -68,11 +68,53 @@
                :effective_type :type/Float}]
              (:cols metadata))))))
 
-(deftest ^:integration execute-query-falls-back-to-row-inference-for-unparsed-duckdb-sql-test
+(deftest ^:integration execute-query-types-empty-and-null-results-without-describe-test
+  (doseq [[suffix expected-rows] [[" WHERE false" []] ["" [[nil nil]]]]]
+    (let [query-sql (str "SELECT NULL::DATE AS d, NULL::TIMESTAMP AS ts" suffix)
+          requests (atom [])
+          query-request client/query-request
+          response (promise)]
+      (with-redefs [client/query-request
+                    (fn [details native-query]
+                      (swap! requests conj (:query native-query))
+                      (query-request details native-query))]
+        (client/execute-query!
+         (mock-details)
+         {:query query-sql}
+         nil
+         (fn [metadata rows]
+           (deliver response [metadata (into [] rows)]))))
+      (let [[metadata rows] @response]
+        (is (= expected-rows rows))
+        (is (= ["d" "ts"] (mapv :name (:cols metadata))))
+        (is (= ["DATE" "TIMESTAMP"] (mapv :database_type (:cols metadata))))
+        (is (= [:type/Date :type/DateTime] (mapv :base_type (:cols metadata))))
+        (is (= [query-sql] @requests))))))
+
+(deftest ^:integration metadata-and-probes-use-ephemeral-sessions-test
+  (let [details (mock-details)
+        requests (atom [])
+        query-request client/query-request]
+    (with-redefs [client/query-request
+                  (fn [details native-query]
+                    (let [request (query-request details native-query)]
+                      (swap! requests conj (.ephemeral request))
+                      request))]
+      (client/test-connection! details)
+      (client/list-schemas! details)
+      (client/query-result-metadata details "SELECT 1 AS n")
+      (client/execute-query! details {:query "SELECT 1 AS n"} nil
+                             (fn [_ rows] (into [] rows))))
+    (is (= [true true true nil] @requests)
+        "metadata uses ephemeral sessions; executed questions preserve cancellation")))
+
+(deftest ^:integration execute-query-types-unparsed-duckdb-sql-from-the-response-test
   (let [details  (mock-details)
         query-sql "FROM range(1) SELECT range AS n"
         response (promise)]
-    (is (= [] (client/query-result-metadata details query-sql)))
+    (testing "DESCRIBE cannot parse DuckDB's FROM-first syntax, so a question that is only
+    ever described stays untyped"
+      (is (= [] (client/query-result-metadata details query-sql))))
     (client/execute-query!
      details
      {:query query-sql}
@@ -80,10 +122,12 @@
      (fn [metadata rows]
        (deliver response [metadata (into [] rows)])))
     (let [[metadata rows] @response]
-      (is (= [{:name           "n"
-               :base_type      :type/Integer
-               :effective_type :type/Integer}]
-             (:cols metadata)))
+      (testing "executing it types it anyway, from the schema line the response carries"
+        (is (= [{:name           "n"
+                 :database_type  "BIGINT"
+                 :base_type      :type/Integer
+                 :effective_type :type/Integer}]
+               (:cols metadata))))
       (is (= [[0]] rows)))))
 
 (deftest ^:integration authentication-errors-are-sanitized-test

@@ -3,7 +3,7 @@
 
  :deps
  {ai.altertable/altertable-lakehouse-java
-  {:mvn/version "0.1.3"}}
+  {:mvn/version "0.1.4"}}
 
  :mvn/repos
  {"opensaml" {:url "https://build.shibboleth.net/nexus/content/repositories/releases/"}}

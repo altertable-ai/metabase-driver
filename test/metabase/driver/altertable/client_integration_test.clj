@@ -68,6 +68,29 @@
                :effective_type :type/Float}]
              (:cols metadata))))))
 
+(deftest ^:integration execute-query-types-empty-and-null-results-without-describe-test
+  (doseq [[suffix expected-rows] [[" WHERE false" []] ["" [[nil nil]]]]]
+    (let [query-sql (str "SELECT NULL::DATE AS d, NULL::TIMESTAMP AS ts" suffix)
+          requests (atom [])
+          query-request client/query-request
+          response (promise)]
+      (with-redefs [client/query-request
+                    (fn [details native-query]
+                      (swap! requests conj (:query native-query))
+                      (query-request details native-query))]
+        (client/execute-query!
+         (mock-details)
+         {:query query-sql}
+         nil
+         (fn [metadata rows]
+           (deliver response [metadata (into [] rows)]))))
+      (let [[metadata rows] @response]
+        (is (= expected-rows rows))
+        (is (= ["d" "ts"] (mapv :name (:cols metadata))))
+        (is (= ["DATE" "TIMESTAMP"] (mapv :database_type (:cols metadata))))
+        (is (= [:type/Date :type/DateTime] (mapv :base_type (:cols metadata))))
+        (is (= [query-sql] @requests))))))
+
 (deftest ^:integration execute-query-types-unparsed-duckdb-sql-from-the-response-test
   (let [details  (mock-details)
         query-sql "FROM range(1) SELECT range AS n"

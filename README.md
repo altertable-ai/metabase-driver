@@ -80,9 +80,9 @@ include or exclude schemas during sync.
 
 The test dependency is pinned to Metabase `v0.61.2`. Supporting additional
 Metabase versions will be evaluated as the driver approaches its first
-release. The project consumes version `0.1.3` of the
+release. The project declares its
 [`altertable-lakehouse-java`](https://github.com/altertable-ai/altertable-lakehouse-java)
-SDK from Maven Central.
+SDK dependency in `deps.edn`.
 
 ### Run the tests
 

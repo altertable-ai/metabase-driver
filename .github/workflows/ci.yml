@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 30
     services:
       altertable-mock:
-        image: ghcr.io/altertable-ai/altertable-mock@sha256:2e85cecd30b582a28196fc7574b2c7ae323378ccf40abfe658e2692270799977
+        image: ghcr.io/altertable-ai/altertable-mock@sha256:2f3523e97fe4167e648d53e274bb37059ba674913a84206713af769d6bf198d2
         ports:
           - 15000:15000
         env:

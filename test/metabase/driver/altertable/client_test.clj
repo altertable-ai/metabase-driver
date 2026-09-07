@@ -1,7 +1,13 @@
 (ns metabase.driver.altertable.client-test
   (:require
    [clojure.test :refer :all]
-   [metabase.driver.altertable.client :as client]))
+   [metabase.driver.altertable.client :as client])
+  (:import
+   (ai.altertable.lakehouse LakehouseClient LakehouseClient$Config)
+   (java.io ByteArrayInputStream)
+   (java.net.http HttpClient HttpHeaders HttpResponse)
+   (java.nio.charset StandardCharsets)
+   (java.util.function BiPredicate)))
 
 (deftest normalize-details-test
   (testing "normalizes defaults and credentials"
@@ -147,6 +153,28 @@
 
 (def ^:private connection-details
   {:catalog "lake" :username "alice" :password "secret"})
+
+(deftest execute-query-closes-response-when-row-inference-fails-test
+  (let [closed?   (atom false)
+        response (proxy [ByteArrayInputStream]
+                        [(.getBytes "{}\n[\"n\"]\n[1]\n{\"error\":\"invalid value\"}\n"
+                                    StandardCharsets/UTF_8)]
+                   (close [] (reset! closed? true)))
+        headers  (HttpHeaders/of {} (reify BiPredicate (test [_ _ _] true)))
+        transport (proxy [HttpClient] []
+                    (send [_request _handler]
+                      (reify HttpResponse
+                        (body [_] response)
+                        (statusCode [_] 200)
+                        (headers [_] headers))))
+        sdk      (LakehouseClient. (doto (LakehouseClient$Config.)
+                                    (.httpClient transport)
+                                    (.credentials "alice" "secret")))]
+    (with-redefs [client/details->client (constantly sdk)]
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (client/execute-query! connection-details {:query "SELECT 1 AS n"} nil
+                                          (fn [_ rows] (into [] rows)))))
+      (is @closed? "row inference must close the response when it fails before reduction"))))
 
 (defn- cached-clients []
   (vals @@#'client/connections))

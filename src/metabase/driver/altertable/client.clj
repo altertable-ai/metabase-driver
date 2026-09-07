@@ -549,24 +549,24 @@
   (let [lakehouse-client (details->client details)
         done-chan        (async/chan 1)]
     (try
-      (let [^LakehouseClient$QueryResult query-result
-            (.query lakehouse-client (query-request details native-query))
-            described-columns (response-columns (.schema query-result))
-            metadata  (.metadata query-result)
-            iterator  (converting-iterator (.iterator query-result))
-            columns   (vec (.columns query-result))
-            prefix    (if (= (count columns) (count described-columns))
-                        []
-                        (take-prefix! iterator 32))
-            row-source (results/rows-reducible prefix iterator query-result)]
-        (when cancel-chan
-          (async/thread
-            (let [[signal port] (async/alts!! [cancel-chan done-chan])]
-              (when (and (= port cancel-chan) signal)
-                (try
-                  (cancel-query! lakehouse-client metadata)
-                  (catch Exception _))))))
-        (respond (results/column-metadata columns prefix described-columns) row-source))
+      (with-open [^LakehouseClient$QueryResult query-result
+                  (.query lakehouse-client (query-request details native-query))]
+        (let [described-columns (response-columns (.schema query-result))
+              metadata  (.metadata query-result)
+              iterator  (converting-iterator (.iterator query-result))
+              columns   (vec (.columns query-result))
+              prefix    (if (= (count columns) (count described-columns))
+                          []
+                          (take-prefix! iterator 32))
+              row-source (results/rows-reducible prefix iterator query-result)]
+          (when cancel-chan
+            (async/thread
+              (let [[signal port] (async/alts!! [cancel-chan done-chan])]
+                (when (and (= port cancel-chan) signal)
+                  (try
+                    (cancel-query! lakehouse-client metadata)
+                    (catch Exception _))))))
+          (respond (results/column-metadata columns prefix described-columns) row-source)))
       (catch LakehouseClient$LakehouseException error
         (throw (sdk-exception error)))
       (finally

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/altertable-ai/metabase-driver/compare/v0.2.3...v0.3.0) (2026-09-07)
+
+
+### Features
+
+* **driver:** read column types from the query response ([d7f4b1b](https://github.com/altertable-ai/metabase-driver/commit/d7f4b1b3f6fc0cf9ef1625b27672831fb64d8fd8))
+
 ## [0.2.3](https://github.com/altertable-ai/metabase-driver/compare/v0.2.2...v0.2.3) (2026-08-03)
 
 

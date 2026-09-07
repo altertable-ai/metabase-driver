@@ -316,7 +316,7 @@
   (let [^LakehouseClient client (details->client details)]
     (try
       (let [^LakehouseClient$QueryAllResult result
-            (.queryAll client (query-request details native-query))
+            (.queryAll client (query-request details (assoc native-query :ephemeral true)))
             columns (vec (.columns result))]
         (mapv (fn [^java.util.List row]
                 (mapv (fn [^JsonNode node]
@@ -522,7 +522,7 @@
   (let [^LakehouseClient client (build-client (normalize-details details))]
     (try
       (with-open [^LakehouseClient$QueryResult _result
-                  (.query client (query-request details {:query "SELECT 1 AS ok"}))]
+                  (.query client (query-request details {:query "SELECT 1 AS ok" :ephemeral true}))]
         true)
       (catch LakehouseClient$LakehouseException error
         (throw (sdk-exception error))))))

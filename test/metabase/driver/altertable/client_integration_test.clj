@@ -91,6 +91,23 @@
         (is (= [:type/Date :type/DateTime] (mapv :base_type (:cols metadata))))
         (is (= [query-sql] @requests))))))
 
+(deftest ^:integration metadata-and-probes-use-ephemeral-sessions-test
+  (let [details (mock-details)
+        requests (atom [])
+        query-request client/query-request]
+    (with-redefs [client/query-request
+                  (fn [details native-query]
+                    (let [request (query-request details native-query)]
+                      (swap! requests conj (.ephemeral request))
+                      request))]
+      (client/test-connection! details)
+      (client/list-schemas! details)
+      (client/query-result-metadata details "SELECT 1 AS n")
+      (client/execute-query! details {:query "SELECT 1 AS n"} nil
+                             (fn [_ rows] (into [] rows))))
+    (is (= [true true true nil] @requests)
+        "metadata uses ephemeral sessions; executed questions preserve cancellation")))
+
 (deftest ^:integration execute-query-types-unparsed-duckdb-sql-from-the-response-test
   (let [details  (mock-details)
         query-sql "FROM range(1) SELECT range AS n"

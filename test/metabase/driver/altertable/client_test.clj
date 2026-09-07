@@ -113,6 +113,15 @@
                         (client/test-connection! {:username "alice"
                                                   :password "secret"}))))
 
+(deftest query-request-preserves-explicit-session-options-test
+  (doseq [ephemeral [nil false true]]
+    (let [request (client/query-request {:catalog "lake" :username "alice" :password "secret"}
+                                        {:query "SELECT 1"
+                                         :session-id "metabase-session"
+                                         :ephemeral ephemeral})]
+      (is (= ephemeral (.ephemeral request)))
+      (is (= "metabase-session" (.sessionId request))))))
+
 (deftest normalize-details-preserves-schema-filters-test
   (is (= "inclusion"
          (:schema-filters-type

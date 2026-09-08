@@ -90,18 +90,6 @@ session from the pool. Queries are never automatically replayed. If the backend
 replaces an expired session, the driver retains the replacement identifier.
 Changing database connection settings invalidates cached pools.
 
-Before enabling reuse on workers that can recycle, deploy the
-[backend session recovery fix](https://github.com/altertable-ai/backend/commit/5f14a881b19d6d297c8a2b1be1460090ca7858bc).
-Without it, the first question using a session whose worker lease was released
-can fail once. Recovery replaces the session before executing SQL.
-
-The setting bounds sessions retained for reuse, not total query concurrency or
-server session count. The HTTP API has no session-close operation, so retired
-sessions rely on backend expiration (currently four hours). Benchmark your own
-queries before enabling reuse broadly; local test results do not establish a
-production latency guarantee.
-See the [measurements and reproduction steps](docs/session-reuse.md).
-
 ## Development
 
 ### Requirements

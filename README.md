@@ -59,6 +59,7 @@ Metabase will expose the following settings when the plugin is installed:
 | Schema                | Optional default schema for unqualified query names (advanced)              |
 | Schemas               | Optional sync inclusion/exclusion filters (advanced)                        |
 | Compute size          | `AUTO`, `XS`, `S`, `M`, `L`, or `XL` (advanced)                             |
+| Reusable sessions     | Sessions retained for query builder questions, `0` disables, maximum `32` (advanced) |
 | Connection timeout    | Time allowed to establish a connection, in seconds (advanced)               |
 | Query timeout         | Time allowed for a request, in seconds (advanced)                           |
 
@@ -69,6 +70,25 @@ Metabase.
 The optional **Schema** setting is only the default query schema. It does not
 limit which schemas Metabase synchronizes. Use the **Schemas** filter controls to
 include or exclude schemas during sync.
+
+### Reusing query sessions
+
+For controlled workloads using a fixed compute size (`XS` through `XL`), set
+**Reusable sessions for query builder questions** to the number of sessions to
+retain. The default is `0`, which preserves independent query sessions.
+`AUTO`, native SQL questions, questions containing native SQL stages, and
+metadata synchronization bypass reuse.
+
+Each session serves one query at a time, through result consumption and completion
+of its cancellation request. When all reusable sessions are busy, additional
+queries use independent sessions without waiting for a pool slot. Pools are
+isolated by Metabase database and effective connection settings, including
+credentials, catalog, schema, compute size, and timezone.
+
+A failed or cancelled query, or an incompletely consumed stream, retires its
+session from the pool. Queries are never automatically replayed. If the backend
+replaces an expired session, the driver retains the replacement identifier.
+Changing database connection settings invalidates cached pools.
 
 ## Development
 

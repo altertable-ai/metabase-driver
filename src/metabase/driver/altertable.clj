@@ -76,13 +76,16 @@
                     {:type   qp.error-type/driver
                      :params (count params)})))
   (let [database (driver-api/database (driver-api/metadata-provider))
-        details  (driver.conn/effective-details database)
+        details  (assoc (driver.conn/effective-details database) :database-id (:id database))
         max-rows (driver-api/determine-query-max-rows outer-query)
         timezone (some-> (driver-api/report-timezone-id-if-supported :altertable database) str)]
     (try
       (client/execute-query!
        details
-       (cond-> {:query sql}
+       (cond-> {:query sql
+                ;; Metabase sets this only after compiling a query without any native stage.
+                :session-reuse? (and (= :query (:type outer-query))
+                                     (some? (:qp/compiled-inline outer-query)))}
          max-rows  (assoc :max-rows max-rows)
          timezone  (assoc :timezone timezone))
        canceled-chan

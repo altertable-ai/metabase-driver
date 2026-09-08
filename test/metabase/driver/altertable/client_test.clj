@@ -17,6 +17,7 @@
             :username               "alice"
             :password               "secret"
             :compute-size           :AUTO
+            :session-pool-size      0
             :connect-timeout-seconds 5
             :request-timeout-seconds 60}
            (client/normalize-details {:catalog " analytics "
@@ -235,3 +236,12 @@
   (testing "invalidation empties the cache without touching the clients it handed out"
     (client/forget-clients!)
     (is (empty? (cached-clients)))))
+
+(deftest session-pool-size-is-bounded-test
+  (let [details {:catalog "lake" :username "alice" :password "secret"}]
+    (doseq [value [nil 0 " 0 " 1 "4" 32]]
+      (is (= (if (nil? value) 0 (Long/parseLong (clojure.string/trim (str value))))
+             (:session-pool-size (client/normalize-details (assoc details :session-pool-size value))))))
+    (doseq [value [-1 33 1.5 "invalid" "999999999999999999999"]]
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (client/normalize-details (assoc details :session-pool-size value)))))))

@@ -41,6 +41,12 @@ driver:
       default: AUTO
       visible-if:
         advanced-options: true
+    - name: session-pool-size
+      display-name: Reusable sessions for query builder questions (0 disables, maximum 32)
+      type: string
+      default: '0'
+      visible-if:
+        advanced-options: true
     - name: connect-timeout-seconds
       display-name: Connection timeout (seconds)
       type: string

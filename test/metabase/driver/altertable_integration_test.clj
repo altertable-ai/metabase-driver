@@ -194,6 +194,7 @@
           :password "testpass"
           :base-url "https://api.altertable.ai"
           :compute-size :AUTO
+          :session-pool-size 0
           :connect-timeout-seconds 5
           :request-timeout-seconds 60
           :schema-filters-type "inclusion"

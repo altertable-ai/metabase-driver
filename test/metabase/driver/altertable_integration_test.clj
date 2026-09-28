@@ -342,3 +342,8 @@
           {:keys [tables]} (driver/describe-database :altertable filtered)]
       (is (= #{"main"} schemas))
       (is (not-any? #(= other-schema (:schema %)) tables)))))
+
+(deftest ^:integration query-errors-carry-the-backend-reason-test
+  (let [error (is (thrown? clojure.lang.ExceptionInfo
+                           (execute-sql! (mock-details) "SELECT * FROM missing_reason_table")))]
+    (is (re-find #"^Altertable query failed: .*missing_reason_table" (ex-message error)))))

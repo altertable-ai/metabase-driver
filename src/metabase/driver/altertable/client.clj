@@ -243,13 +243,19 @@
      cache
      "duckdb")))
 
+(def ^:private sdk-message-framing
+  "What the SDK wraps around the backend's reason: `query failed: HTTP status 400: <reason>`
+  for a rejected request, `query failed: NDJSON line 2: <reason>` for an error in the stream."
+  #"^\S+ failed(?:: )?(?:(?:HTTP status|NDJSON line) \d+(?:: )?)?")
+
 (defn- sdk-exception [^LakehouseClient$LakehouseException error]
   (let [status-code (.statusCode error)
         request-id  (.requestId error)
+        reason      (non-blank (str/replace-first (str (.getMessage error)) sdk-message-framing ""))
         message     (str "Altertable " (.operation error) " failed"
-                         (when status-code (str " (HTTP " status-code ")"))
+                         (when (some-> status-code (>= 400)) (str " (HTTP " status-code ")"))
                          (when request-id (str " [request " request-id "]"))
-                         ".")]
+                         (if reason (str ": " reason) "."))]
     (ex-info message
              {:type        :altertable/api-error
               :operation   (.operation error)

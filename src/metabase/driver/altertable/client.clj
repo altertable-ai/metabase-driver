@@ -589,7 +589,14 @@
                            pool (assoc :session-id (:session-id slot) :ephemeral false))]
     (try
       (with-open [^LakehouseClient$QueryResult query-result
-                  (.query lakehouse-client (query-request details request))]
+                  (try
+                    (.query lakehouse-client (query-request details request))
+                    (catch LakehouseClient$LakehouseException error
+                      ;; HTTP 400 precedes SQL execution, including when a session expires.
+                      ;; SDK 0.1.4 drops error bodies; narrow this to session expiry once it exposes them.
+                      (if (and (:session-id slot) (= 400 (.statusCode error)))
+                        (.query lakehouse-client (query-request details (dissoc request :session-id)))
+                        (throw error))))]
         (let [metadata   (.metadata query-result)
               done-chan  (async/chan)
               canceled?  (atom false)

@@ -86,8 +86,13 @@ isolated by Metabase database and effective connection settings, including
 credentials, catalog, schema, compute size, and timezone.
 
 A failed or cancelled query, or an incompletely consumed stream, retires its
-session from the pool. Queries are never automatically replayed. If the backend
-replaces an expired session, the driver retains the replacement identifier.
+session from the pool. A pooled session also expires with its backend worker
+lease. The backend rejects an expired session with HTTP 400 before executing any
+SQL. SDK 0.1.4 does not expose the error body, so the driver retries any HTTP 400
+once on a fresh session only when it supplied a pooled session identifier.
+Other failures and caller-supplied session identifiers are never retried. Queries
+are never replayed once they start executing. The pool keeps whichever session
+answered.
 Changing database connection settings invalidates cached pools.
 
 ## Development

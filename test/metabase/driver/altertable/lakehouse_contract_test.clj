@@ -72,13 +72,13 @@
                          (map row-line rows)
                          [""])))
 
-(defn- query-handler [{:keys [columns rows on-request on-cancel transform-response]} requests]
+(defn- query-handler [{:keys [columns rows on-request on-cancel transform-response expired-sessions error-response]} requests]
   (reify HttpHandler
     (^void handle [_ ^HttpExchange exchange]
-      (let [body
+      (let [[status body]
             (if (= "DELETE" (.getRequestMethod exchange))
               (do (when on-cancel (on-cancel exchange))
-                  "{\"cancelled\":true,\"message\":\"Cancelled\"}")
+                  [200 "{\"cancelled\":true,\"message\":\"Cancelled\"}"])
               (let [^JsonNode payload (.readTree object-mapper (.getRequestBody exchange))
                     session-id (or (.asText ^JsonNode (.path payload "session_id") nil) (str (UUID/randomUUID)))
                     statement  (.asText ^JsonNode (.get payload "statement"))
@@ -87,16 +87,25 @@
                                  (json-number payload "limit"))]
                 (swap! requests conj {:statement statement :rows-limit rows-limit :payload payload :response-session-id session-id})
                 (when on-request (on-request payload))
-                (if (str/starts-with? statement "DESCRIBE ")
-                  (ndjson statement nil [["column_name" "VARCHAR"] ["column_type" "VARCHAR"]]
-                          (mapv vec columns) session-id)
-                  (ndjson statement rows-limit columns (cond->> rows rows-limit (take rows-limit)) session-id))))
+                (cond
+                  (some-> error-response deref)
+                  @error-response
+
+                  (contains? (some-> expired-sessions deref) session-id)
+                  [400 "Session expired. Open a new session."]
+
+                  (str/starts-with? statement "DESCRIBE ")
+                  [200 (ndjson statement nil [["column_name" "VARCHAR"] ["column_type" "VARCHAR"]]
+                               (mapv vec columns) session-id)]
+
+                  :else
+                  [200 (ndjson statement rows-limit columns (cond->> rows rows-limit (take rows-limit)) session-id)])))
             body (if (and transform-response (= "POST" (.getRequestMethod exchange)))
                    (transform-response body)
                    body)
             encoded (.getBytes ^String body StandardCharsets/UTF_8)]
         (.add (.getResponseHeaders exchange) "Content-Type" "application/x-ndjson")
-        (.sendResponseHeaders exchange 200 (alength encoded))
+        (.sendResponseHeaders exchange status (alength encoded))
         (with-open [out (.getResponseBody exchange)] (.write out encoded))
         nil))))
 
@@ -317,6 +326,57 @@
         (is (= [nil explicit-id (:response-session-id (first @requests))]
                (mapv session-id @requests)))))))
 
+(deftest expired-pooled-sessions-are-replaced-before-execution-test
+  (let [expired-sessions (atom #{})]
+    (with-fake-lakehouse
+      {:columns [["n" "BIGINT"]] :rows [[42]] :expired-sessions expired-sessions}
+      (fn [details requests]
+        (let [details (assoc details :compute-size "XS" :session-pool-size 1)
+              query   {:query "SELECT 42 AS n" :session-reuse? true}]
+          (run-query! details query)
+          (swap! expired-sessions conj (:response-session-id (first @requests)))
+          (is (= [[42]] (second (run-query! details query))))
+          (run-query! details query)
+          (is (= [nil (:response-session-id (first @requests))
+                  nil (:response-session-id (nth @requests 2))]
+                 (mapv session-id @requests))))))))
+
+(deftest expired-explicit-sessions-are-not-replaced-test
+  (let [explicit-id (str (UUID/randomUUID))]
+    (with-fake-lakehouse
+      {:columns [["n" "BIGINT"]] :rows [[42]] :expired-sessions (atom #{explicit-id})}
+      (fn [details requests]
+        (let [details (assoc details :compute-size "XS" :session-pool-size 1)]
+          (is (thrown? Exception (run-query! details {:query "SELECT 42 AS n"
+                                                      :session-reuse? true
+                                                      :session-id explicit-id})))
+          (is (= [explicit-id] (mapv session-id @requests))))))))
+
+
+(deftest http-failures-retry-only-borrowed-sessions-once-test
+  (doseq [[warm-pool? status attempts] [[false 400 1] [true 400 2]
+                                      [true 401 1] [true 403 1] [true 429 1] [true 500 1]]]
+    (testing (str "HTTP " status " with " (if warm-pool? "a borrowed session" "a fresh session"))
+      (let [error-response (atom nil)]
+        (with-fake-lakehouse
+          {:columns [["n" "BIGINT"]] :rows [[42]] :error-response error-response}
+          (fn [details requests]
+            (let [details (assoc details :compute-size "XS" :session-pool-size 1)
+                  query   {:query "SELECT 42 AS n" :session-reuse? true}]
+              (when warm-pool? (run-query! details query))
+              (reset! requests [])
+              (reset! error-response [status "Request rejected"])
+              (let [failure (try (run-query! details query)
+                                 (catch clojure.lang.ExceptionInfo error error))]
+                (is (= status (:status-code (ex-data failure)))))
+              (is (= attempts (count @requests)))
+              (when (= 2 attempts)
+                (is (nil? (session-id (last @requests)))))
+              (reset! error-response nil)
+              (dotimes [_ 2] (is (= [[42]] (second (run-query! details query)))))
+              (let [[fresh reused] (take-last 2 @requests)]
+                (is (nil? (session-id fresh)))
+                (is (= (:response-session-id fresh) (session-id reused)))))))))))
 
 (deftest pool-scopes-isolate-effective-connection-settings-test
   (doseq [[detail-changes query-changes]
@@ -350,18 +410,24 @@
             (is (nil? (session-id (last @requests))))))))))
 
 (deftest malformed-streams-are-not-replayed-or-reused-test
-  (doseq [suffix ["not-json\n" "{\"error\":\"deliberate query failure\"}\n"]]
-    (let [fail? (atom true)]
+  (doseq [transform [(fn [body] (str body "not-json\n"))
+                    (fn [body] (str body "{\"error\":\"deliberate query failure\"}\n"))
+                    (fn [body] (str (first (str/split-lines body))
+                                    "\n{\"error\":\"deliberate query failure\"}\n"))]]
+    (let [fail? (atom false)]
       (with-fake-lakehouse
         {:columns [["n" "BIGINT"]] :rows [[42]]
-         :transform-response (fn [body] (if (compare-and-set! fail? true false) (str body suffix) body))}
+         :transform-response (fn [body] (if (compare-and-set! fail? true false) (transform body) body))}
         (fn [details requests]
           (let [details (assoc details :compute-size "XS" :session-pool-size 1)
                 query {:query "SELECT 42 AS n" :session-reuse? true}]
+            (run-query! details query)
+            (reset! fail? true)
             (is (thrown? Exception (run-query! details query)))
-            (is (= 1 (count @requests)))
+            (is (= 2 (count @requests)))
             (is (= [[42]] (second (run-query! details query))))
-            (is (= [nil nil] (mapv session-id @requests)))))))))
+            (is (= [nil (:response-session-id (first @requests)) nil]
+                   (mapv session-id @requests)))))))))
 
 (deftest replacement-session-identifiers-are-adopted-without-replaying-test
   (let [replacement (str (UUID/randomUUID))
